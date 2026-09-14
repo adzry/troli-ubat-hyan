@@ -1,0 +1,52 @@
+name: Deploy to Apps Script (clasp push)
+
+on:
+  push:
+    branches:
+      - main
+      - claude/laughing-keller-3ro3pp
+    paths:
+      - 'sistem-notifikasi/**'
+      - 'dashboard-analitik/**'
+      - '.github/workflows/clasp-push.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: clasp-push-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  clasp-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install clasp
+        run: npm install -g @google/clasp@2.4.2
+
+      - name: Write clasp credentials
+        env:
+          CLASP_CREDENTIALS: ${{ secrets.CLASP_CREDENTIALS }}
+        run: |
+          if [ -z "$CLASP_CREDENTIALS" ]; then
+            echo "::error::Secret CLASP_CREDENTIALS is not set. See README/setup instructions."
+            exit 1
+          fi
+          echo "$CLASP_CREDENTIALS" > "$HOME/.clasprc.json"
+
+      - name: Push sistem-notifikasi
+        working-directory: sistem-notifikasi
+        run: clasp push --force
+
+      - name: Push dashboard-analitik
+        working-directory: dashboard-analitik
+        run: clasp push --force
