@@ -6,264 +6,133 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <style>
     :root {
-      --blue:#0066FF;--blue-soft:#E8F1FF;--green:#1FA463;--green-soft:#E6F7EE;
-      --amber:#C8860A;--amber-soft:#FBF1DE;--red:#D6362A;--red-soft:#FCE9E7;
-      --ink:#15171C;--ink-2:#5C6370;--ink-3:#99A0AB;--line:#E7E9EE;
-      --bg-0:#F7F8FA;--bg-1:#FFFFFF;
-      --radius-xl:28px;--radius-l:18px;--radius-m:12px;
-      --font:-apple-system,'SF Pro Display','Inter',BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      --bg:#F7F7F5;
+      --surface:#FFFFFF;
+      --text-primary:#171717;
+      --text-secondary:#6B6B6B;
+      --text-muted:#909090;
+      --border:#DEDED9;
+      --border-light:#E8E8E4;
+      --accent-success:#2F6B4F;
+      --danger:#B42318;
+      --danger-soft:#FBEEEC;
+      --button:#111111;
+      --button-text:#FFFFFF;
+      --header-bg:#111111;
+      --font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Inter',sans-serif;
       --mono:'SF Mono','JetBrains Mono',Consolas,monospace;
     }
     *{box-sizing:border-box;margin:0;padding:0}
     html,body{height:100%}
-    body{font-family:var(--font);color:var(--ink);background:var(--bg-0);-webkit-font-smoothing:antialiased;position:relative;overflow-x:hidden;padding-bottom:32px}
-    body::before{content:'';position:fixed;top:-10%;left:50%;transform:translateX(-50%);width:900px;height:600px;background:radial-gradient(circle,rgba(0,102,255,0.07) 0%,rgba(0,102,255,0) 70%);pointer-events:none;z-index:0}
-    .shell{position:relative;z-index:1;max-width:560px;margin:0 auto;padding:20px 18px 100px}
+    body{font-family:var(--font);color:var(--text-primary);background:var(--bg);-webkit-font-smoothing:antialiased}
 
-    .topbar{display:flex;align-items:center;justify-content:space-between;padding:4px 4px 18px}
-    .topbar .org{font-size:12.5px;font-weight:600;color:var(--ink-2);letter-spacing:.01em}
-    .topbar .org strong{color:var(--ink);font-weight:700}
-    .topbar .clock{font-size:13px;font-weight:600;color:var(--ink-2);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+    .header{background:var(--header-bg)}
+    .header-inner{max-width:860px;margin:0 auto;padding:14px 20px;font-size:13px;font-weight:500;color:#fff}
 
-    .hero{position:relative;border-radius:var(--radius-xl);padding:32px 26px 28px;background:linear-gradient(165deg,rgba(255,255,255,.92) 0%,rgba(245,249,255,.88) 100%);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.6);box-shadow:0 1px 2px rgba(15,23,42,.04),0 24px 48px -16px rgba(15,23,42,.12);overflow:hidden;opacity:0;animation:fadeUp .5s ease forwards}
-    @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-    .hero-greeting{font-size:13px;font-weight:600;color:var(--ink-3);margin-bottom:6px}
-    .hero-ward{font-size:26px;font-weight:700;letter-spacing:-.02em;color:var(--ink);margin-bottom:18px;position:relative;z-index:2;max-width:70%}
+    .shell{max-width:860px;margin:0 auto;padding:0 20px 64px}
 
-    .status-pill{display:inline-flex;align-items:center;gap:7px;padding:7px 14px 7px 10px;border-radius:100px;font-size:12.5px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;margin-bottom:20px;position:relative;z-index:2}
-    .status-pill .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;position:relative}
-    .status-pill .dot::after{content:'';position:absolute;inset:-4px;border-radius:50%;opacity:0}
-    .status-pill.waiting{background:var(--blue-soft);color:var(--blue)}.status-pill.waiting .dot{background:var(--blue)}
-    .status-pill.ready{background:var(--red-soft);color:var(--red)}.status-pill.ready .dot{background:var(--red);animation:pulseDot 1.6s ease-in-out infinite}.status-pill.ready .dot::after{background:var(--red);animation:pulseRing 1.6s ease-in-out infinite}
-    .status-pill.done{background:var(--green-soft);color:var(--green)}.status-pill.done .dot{background:var(--green)}
-    .status-pill.idle{background:#EEF0F3;color:var(--ink-2)}.status-pill.idle .dot{background:var(--ink-3)}
-    @keyframes pulseDot{0%,100%{opacity:1}50%{opacity:.55}}
-    @keyframes pulseRing{0%{opacity:.5;transform:scale(.6)}80%,100%{opacity:0;transform:scale(2.2)}}
+    .context{padding-top:40px}
+    .greeting{font-size:14px;font-weight:500;color:var(--text-secondary);margin-bottom:8px}
+    .ward{font-size:28px;font-weight:700;letter-spacing:-.01em;color:var(--text-primary);margin-bottom:12px}
+    .state-text{font-size:17px;font-weight:500;color:var(--text-primary);margin-bottom:4px}
+    .state-meta{font-size:13px;color:var(--text-muted)}
+    @media(min-width:600px){ .ward{font-size:32px} }
 
-    .hero-headline{font-size:21px;font-weight:700;letter-spacing:-.01em;line-height:1.35;color:var(--ink);margin-bottom:8px;max-width:78%;position:relative;z-index:2}
-    .hero-sub{font-size:14.5px;color:var(--ink-2);line-height:1.55;max-width:84%;position:relative;z-index:2}
-    .hero-illus{position:absolute;right:-10px;bottom:-6px;width:138px;height:138px;opacity:.9;animation:floatY 4s ease-in-out infinite;z-index:1;pointer-events:none}
-    @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
-    .reminder{margin-top:18px;padding:13px 15px;background:var(--blue-soft);border-radius:var(--radius-m);text-align:left;font-size:12.5px;color:#1d4a8f;line-height:1.55;display:none;position:relative;z-index:2}
-    .hero-actions{margin-top:20px;position:relative;z-index:2}
-    .btn{width:100%;padding:15px;font-size:15px;font-weight:600;font-family:var(--font);border:none;border-radius:14px;cursor:pointer;transition:transform .12s ease,box-shadow .15s ease;display:flex;align-items:center;justify-content:center;gap:8px}
-    .btn:active{transform:scale(.97)}
-    .btn-primary{background:var(--blue);color:#fff;box-shadow:0 8px 20px -6px rgba(0,102,255,.5)}
-    .btn-stop{background:#fff;color:var(--red);border:1.5px solid var(--red-soft);box-shadow:0 2px 8px rgba(15,23,42,.04)}
-    .btn-stop:hover{background:var(--red-soft)}
-    .btn-reenable{background:var(--amber);color:#fff;box-shadow:0 8px 20px -6px rgba(200,134,10,.5);animation:shake 2.4s ease-in-out infinite}
-    @keyframes shake{0%,90%,100%{transform:translateX(0)}92%{transform:translateX(-3px)}94%{transform:translateX(3px)}96%{transform:translateX(-2px)}98%{transform:translateX(2px)}}
-    .errbar{margin-top:12px;font-size:12px;color:var(--red);display:none;text-align:center}
+    .notify-primer{margin-top:20px}
 
-    /* PROGRESS TRAIL */
-    .progress-trail{display:flex;gap:8px;margin-top:18px;opacity:0;animation:fadeUp .5s ease .06s forwards}
-    .progress-step{flex:1;position:relative;border-radius:16px;padding:14px 8px 12px;text-align:center;transition:all .35s cubic-bezier(.16,1,.3,1);overflow:hidden;border:1.5px solid transparent}
-    .progress-step.idle-step{background:#F0F1F3;border-color:transparent}
-    .progress-step.idle-step .ps-icon{opacity:.3;filter:grayscale(1)}
-    .progress-step.idle-step .ps-label,.progress-step.idle-step .ps-sub{color:var(--ink-3)}
-    .progress-step.done-step{background:var(--green-soft);border-color:rgba(31,164,99,.2)}
-    .progress-step.done-step .ps-label{color:var(--green)}
-    .progress-step.done-step .ps-sub{color:var(--green);opacity:.7}
-    .progress-step.active-step{background:var(--bg-1);border-color:var(--step-color,var(--blue));box-shadow:0 0 0 4px var(--step-glow,rgba(0,102,255,.1)),0 8px 20px -8px rgba(15,23,42,.15);transform:translateY(-2px) scale(1.02)}
-    .progress-step.active-step::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 0%,var(--step-glow,rgba(0,102,255,.12)) 0%,transparent 70%);pointer-events:none}
-    .progress-step.active-step .ps-label{color:var(--step-color,var(--blue));font-weight:700}
-    .progress-step.active-step .ps-sub{color:var(--step-color,var(--blue));opacity:.7}
-    .ps-icon{font-size:22px;margin-bottom:6px;display:block;transition:transform .35s}
-    .progress-step.active-step .ps-icon{animation:iconBounce 1s ease-in-out infinite alternate}
-    @keyframes iconBounce{from{transform:translateY(0)}to{transform:translateY(-3px)}}
-    .ps-label{font-size:10.5px;font-weight:600;line-height:1.35;letter-spacing:.01em;color:var(--ink-2)}
-    .ps-sub{font-size:9.5px;color:var(--ink-3);margin-top:3px;font-weight:500}
-    .ps-active-dot{position:absolute;top:8px;right:8px;width:7px;height:7px;border-radius:50%;background:var(--step-color,var(--blue));display:none}
-    .progress-step.active-step .ps-active-dot{display:block;animation:pulseDot 1.4s ease-in-out infinite}
+    .anomaly-box{margin-top:20px;padding:14px 16px;border-left:3px solid var(--danger);background:var(--danger-soft);border-radius:4px}
+    .anomaly-label{font-size:12px;font-weight:700;color:var(--danger);margin-bottom:4px;letter-spacing:.02em}
+    .anomaly-body{font-size:13px;color:var(--text-secondary);line-height:1.5}
 
-    /* KPI GRID */
-    .kpi-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;opacity:0;animation:fadeUp .5s ease .08s forwards}
-    .kpi-card{background:var(--bg-1);border:1px solid var(--line);border-radius:var(--radius-l);padding:16px 16px;transition:transform .15s ease,box-shadow .15s ease}
-    .kpi-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px -8px rgba(15,23,42,.12)}
-    .kpi-icon{font-size:18px;margin-bottom:8px;display:block}
-    .kpi-label{font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);margin-bottom:4px}
-    .kpi-value{font-size:16px;font-weight:700;color:var(--ink);line-height:1.3}
-    .kpi-value.small{font-size:13.5px;font-weight:600}
-    .masa-clock{font-family:var(--mono);font-size:26px;font-weight:700;letter-spacing:.04em;line-height:1.1;color:var(--ink);font-variant-numeric:tabular-nums}
-    .masa-clock.running{color:var(--blue)}
-    .masa-clock.done{color:var(--green)}
-    .masa-clock.overdue{color:var(--red);animation:pulseDot 1s ease-in-out infinite}
-    .masa-sub{font-size:10.5px;color:var(--ink-3);margin-top:3px;font-weight:600}
+    .alarm-box{margin-top:20px;padding:20px;border:1px solid var(--danger);border-radius:12px;background:var(--danger-soft)}
+    .alarm-label{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--danger);margin-bottom:8px}
+    .alarm-body{font-size:14px;color:var(--text-primary);line-height:1.55;margin-bottom:16px}
 
-    /* SECTION & TIMELINE */
-    .section-title{font-size:12.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);margin:30px 4px 14px}
-    .timeline-card{background:var(--bg-1);border:1px solid var(--line);border-radius:var(--radius-l);padding:6px 20px;opacity:0;animation:fadeUp .5s ease .16s forwards}
-    .timeline{list-style:none}
-    .timeline li{display:flex;gap:14px;padding:16px 0;border-bottom:1px solid var(--line)}
-    .timeline li:last-child{border-bottom:none}
-    .tl-rail{display:flex;flex-direction:column;align-items:center;width:10px;flex-shrink:0;padding-top:3px}
-    .tl-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
-    .ic-hantar{background:var(--blue)}.ic-selesai{background:var(--red)}.ic-ambil{background:var(--green)}
-    .tl-time{font-size:12.5px;font-weight:700;color:var(--ink-3);font-variant-numeric:tabular-nums;min-width:40px;flex-shrink:0;padding-top:1px}
-    .tl-body{flex:1;min-width:0}
-    .tl-event{font-size:14.5px;font-weight:600;color:var(--ink);line-height:1.4}
-    .tl-meta{font-size:12.5px;color:var(--ink-3);margin-top:2px}
-    .tl-flag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;color:var(--amber);background:var(--amber-soft);padding:2px 8px;border-radius:100px;vertical-align:middle}
-    .empty-state{text-align:center;padding:36px 12px;color:var(--ink-3)}
-    .empty-state svg{margin-bottom:10px;opacity:.5}
-    .empty-state p{font-size:13.5px}
-    .footer-note{text-align:center;font-size:12px;color:var(--ink-3);margin-top:22px;padding:0 20px}
+    .btn{width:100%;min-height:48px;padding:13px 20px;font-size:14.5px;font-weight:600;font-family:var(--font);border:none;border-radius:8px;cursor:pointer;background:var(--button);color:var(--button-text);transition:opacity .15s ease}
+    .btn:active{opacity:.85}
+    .btn+.btn{margin-top:8px}
+    .btn-outline{background:transparent;color:var(--text-primary);border:1px solid var(--border)}
 
-    /* POPUP */
-    .popup-overlay{position:fixed;inset:0;z-index:100;background:rgba(10,12,18,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;padding:20px;animation:overlayIn .3s ease}
-    .popup-overlay.active{display:flex}
-    @keyframes overlayIn{from{opacity:0}to{opacity:1}}
-    .popup-card{background:var(--bg-1);border-radius:26px;padding:32px 28px 28px;width:100%;max-width:360px;text-align:center;box-shadow:0 32px 64px -20px rgba(10,12,18,.4);animation:popIn .35s cubic-bezier(.16,1,.3,1);position:relative}
-    @keyframes popIn{from{opacity:0;transform:scale(.88) translateY(16px)}to{opacity:1;transform:scale(1) translateY(0)}}
-    .popup-icon{font-size:40px;margin-bottom:8px;display:block;animation:floatY 3s ease-in-out infinite}
-    .popup-title{font-size:13px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
-    .popup-wad{font-size:18px;font-weight:700;color:var(--ink);margin-bottom:20px}
-    .popup-clock-wrap{background:linear-gradient(135deg,#0A0E1A 0%,#0D1525 100%);border-radius:20px;padding:22px 16px;margin-bottom:18px;position:relative;overflow:hidden}
-    .popup-clock-wrap::before{content:'';position:absolute;top:-30%;left:50%;transform:translateX(-50%);width:200px;height:120px;background:radial-gradient(circle,rgba(0,102,255,.25) 0%,transparent 70%)}
-    .popup-clock-label{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.4);margin-bottom:8px}
-    .popup-clock{font-family:var(--mono);font-size:48px;font-weight:700;color:#FFF;letter-spacing:.04em;font-variant-numeric:tabular-nums;text-shadow:0 0 30px rgba(0,122,255,.6);position:relative;z-index:1}
-    .popup-clock-sub{font-size:11px;color:rgba(255,255,255,.4);margin-top:6px;font-weight:600}
-    .popup-desc{font-size:13px;color:var(--ink-2);line-height:1.55}
-    .popup-sla-tag{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:6px 14px;border-radius:100px;font-size:11.5px;font-weight:700}
-    .popup-sla-tag.ok{background:var(--green-soft);color:var(--green)}
-    .popup-sla-tag.warn{background:var(--amber-soft);color:var(--amber)}
-    .popup-sla-tag.over{background:var(--red-soft);color:var(--red)}
+    .errbar{margin-top:12px;font-size:12px;color:var(--danger);display:none}
 
-    @media(max-width:420px){
-      .hero-ward{font-size:22px;max-width:64%}
-      .hero-headline{font-size:19px;max-width:100%}
-      .hero-illus{width:104px;height:104px;opacity:.7}
-      .progress-trail{gap:5px}
-      .ps-icon{font-size:18px}
-      .ps-label{font-size:9px}
-      .popup-clock{font-size:36px}
+    .section-heading{margin-top:48px;margin-bottom:16px;font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
+
+    .timeline-card{border:1px solid var(--border);border-radius:12px;padding:4px 20px;background:var(--surface)}
+    .timeline-list{list-style:none}
+    .tl-row{display:flex;gap:14px;padding:16px 0}
+    .tl-rail{position:relative;width:12px;flex-shrink:0;display:flex;justify-content:center;padding-top:5px}
+    .tl-node{width:9px;height:9px;border-radius:50%;background:var(--text-primary);flex-shrink:0;position:relative;z-index:1}
+    .tl-node.pending{background:var(--surface);border:1.5px solid var(--text-muted);width:8px;height:8px}
+    .tl-row:not(:last-child) .tl-rail::after{content:'';position:absolute;top:15px;bottom:-16px;left:50%;width:1px;background:var(--border);transform:translateX(-50%)}
+    .tl-time{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--text-primary);font-variant-numeric:tabular-nums;min-width:44px;flex-shrink:0}
+    .tl-time.empty{color:transparent}
+    .tl-content{flex:1;min-width:0}
+    .tl-title{font-size:15px;font-weight:600;color:var(--text-primary);line-height:1.4}
+    .tl-title.pending{color:var(--text-muted);font-weight:500}
+    .tl-meta{font-size:13px;color:var(--text-muted);margin-top:2px}
+    .tl-flag{margin-left:6px;font-size:11px;font-weight:700;color:var(--danger);text-transform:uppercase;letter-spacing:.02em}
+
+    .empty-state{padding:32px 4px;color:var(--text-muted);font-size:13px;line-height:1.6}
+
+    .duration{margin-top:8px;padding-top:16px;border-top:1px solid var(--border-light)}
+    .duration-row{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--text-secondary);padding:5px 0}
+    .duration-row .val{font-family:var(--mono);font-weight:600;color:var(--text-primary);font-variant-numeric:tabular-nums}
+    .duration-row .val.overdue{color:var(--danger)}
+    .duration-row .val.ontime{color:var(--accent-success)}
+
+    .footer-note{text-align:center;font-size:12px;color:var(--text-muted);margin-top:40px}
+
+    @media (prefers-reduced-motion: reduce){
+      *,*::before,*::after{transition:none !important;animation:none !important}
     }
   </style>
 </head>
 <body>
+  <div class="header"><div class="header-inner">Hospital Yan &middot; Sistem Notifikasi Troli Ubat</div></div>
+
   <div class="shell">
-    <div class="topbar">
-      <div class="org">Hospital Yan &middot; <strong>Sistem Troli Ubat</strong></div>
-      <div class="clock" id="liveClock">--:--:--</div>
+    <div class="context">
+      <div class="greeting" id="greeting">Selamat sejahtera</div>
+      <div class="ward"><?= wadName ?></div>
+      <div class="state-text" id="headline">Menyemak status semasa&hellip;</div>
+      <div class="state-meta" id="subline"></div>
     </div>
 
-    <div class="hero">
-      <div class="hero-greeting" id="greeting">Selamat sejahtera</div>
-      <div class="hero-ward"><?= wadName ?></div>
-      <div id="pill" class="status-pill idle"><span class="dot"></span><span id="pillLabel">Memuatkan</span></div>
-      <div id="headline" class="hero-headline">Menyemak status semasa&hellip;</div>
-      <div id="subline" class="hero-sub"></div>
-      <div id="reminderBox" class="reminder"></div>
-      <svg class="hero-illus" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-        <rect x="40" y="50" width="100" height="70" rx="10" fill="#0066FF" opacity=".08"/>
-        <rect x="50" y="60" width="80" height="14" rx="4" fill="#0066FF" opacity=".18"/>
-        <rect x="50" y="80" width="80" height="14" rx="4" fill="#0066FF" opacity=".14"/>
-        <rect x="50" y="100" width="80" height="14" rx="4" fill="#0066FF" opacity=".10"/>
-        <rect x="44" y="30" width="6" height="24" rx="3" fill="#0066FF" opacity=".2"/>
-        <rect x="130" y="30" width="6" height="24" rx="3" fill="#0066FF" opacity=".2"/>
-        <rect x="40" y="26" width="100" height="8" rx="4" fill="#0066FF" opacity=".22"/>
-        <circle cx="58" cy="135" r="11" fill="#0066FF" opacity=".16"/>
-        <circle cx="122" cy="135" r="11" fill="#0066FF" opacity=".16"/>
-        <circle cx="58" cy="135" r="4" fill="#0066FF" opacity=".3"/>
-        <circle cx="122" cy="135" r="4" fill="#0066FF" opacity=".3"/>
-      </svg>
-      <div class="hero-actions">
-        <button id="startBtn" class="btn btn-primary" onclick="startSystem()" style="display:none">Aktifkan Penggera Notifikasi</button>
-        <button id="reenableBtn" class="btn btn-reenable" onclick="reenableSound()" style="display:none">&#128264; Bunyi tidak aktif &mdash; Tekan untuk aktifkan</button>
-        <button id="stopBtn" class="btn btn-stop" onclick="stopAlarm()" style="display:none">Hentikan Penggera</button>
-      </div>
-      <div id="errbar" class="errbar"></div>
+    <div class="notify-primer">
+      <button id="startBtn" class="btn" onclick="startSystem()" style="display:none">Aktifkan Penggera Notifikasi</button>
     </div>
 
-    <!-- PROGRESS TRAIL -->
-    <div class="progress-trail" id="progressTrail">
-      <div class="progress-step idle-step" id="stepIsi" style="--step-color:#0066FF;--step-glow:rgba(0,102,255,0.12)">
-        <span class="ps-active-dot"></span>
-        <span class="ps-icon">&#128230;</span>
-        <div class="ps-label">Sedang Isi Troli</div>
-        <div class="ps-sub">Farmasi</div>
-      </div>
-      <div class="progress-step idle-step" id="stepSedia" style="--step-color:#C8860A;--step-glow:rgba(200,134,10,0.12)">
-        <span class="ps-active-dot"></span>
-        <span class="ps-icon">&#9989;</span>
-        <div class="ps-label">Sedia Diambil</div>
-        <div class="ps-sub">Ambil di Farmasi</div>
-      </div>
-      <div class="progress-step idle-step" id="stepSelesai" style="--step-color:#1FA463;--step-glow:rgba(31,164,99,0.12)">
-        <span class="ps-active-dot"></span>
-        <span class="ps-icon">&#127881;</span>
-        <div class="ps-label">Troli Diambil</div>
-        <div class="ps-sub">Selesai</div>
-      </div>
+    <div class="anomaly-box" id="reminderBox" style="display:none">
+      <div class="anomaly-label">Perhatian</div>
+      <div class="anomaly-body">Urutan pergerakan troli memerlukan semakan.</div>
     </div>
 
-    <!-- KPI GRID -->
-    <div class="kpi-grid">
-      <div class="kpi-card">
-        <span class="kpi-icon">&#9201;&#65039;</span>
-        <div class="kpi-label">Kemaskini Terakhir</div>
-        <div class="kpi-value" id="kpiLastTime">&mdash;</div>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-icon">&#9203;</span>
-        <div class="kpi-label">Masa Pengisian</div>
-        <div class="masa-clock" id="masaClock">&mdash;</div>
-        <div class="masa-sub" id="masaSub"></div>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-icon">&#128338;</span>
-        <div class="kpi-label">Status Semasa</div>
-        <div class="kpi-value small" id="kpiStatus">&mdash;</div>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-icon">&#128203;</span>
-        <div class="kpi-label">Pergerakan Hari Ini</div>
-        <div class="kpi-value" id="kpiMovementCount">0</div>
-      </div>
+    <div class="alarm-box" id="alarmBox" style="display:none">
+      <div class="alarm-label">Menunggu Pengambilan</div>
+      <div class="alarm-body" id="alarmBody">Pengisian ubat telah selesai. Sila ambil troli di farmasi.</div>
+      <button id="stopBtn" class="btn" onclick="stopAlarm()" style="display:none">Hentikan Penggera</button>
+      <button id="reenableBtn" class="btn btn-outline" onclick="reenableSound()" style="display:none">Bunyi tidak aktif &mdash; Tekan untuk aktifkan</button>
     </div>
+    <div id="errbar" class="errbar"></div>
 
-    <div class="section-title">Pergerakan troli hari ini</div>
+    <div class="section-heading">Pergerakan Troli Hari Ini</div>
     <div class="timeline-card">
-      <ul id="timelineList" class="timeline"></ul>
+      <ul id="timelineList" class="timeline-list"></ul>
       <div id="emptyState" class="empty-state" style="display:none">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="3" y="7" width="18" height="13" rx="2"/><path d="M3 11h18M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/>
-        </svg>
-        <p>Tiada pergerakan troli direkod lagi hari ini.</p>
+        Tiada pergerakan direkodkan hari ini.<br>Pergerakan akan dipaparkan di sini apabila troli dihantar ke farmasi.
       </div>
     </div>
-    <div class="footer-note">Kemaskini automatik setiap 10 saat</div>
-  </div>
 
-  <!-- RESPONSIVENESS POPUP -->
-  <div class="popup-overlay" id="respPopup">
-    <div class="popup-card">
-      <span class="popup-icon">
-        <svg width="48" height="48" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-          <rect x="40" y="50" width="100" height="70" rx="10" fill="#0066FF" opacity="0.15"/>
-          <rect x="50" y="60" width="80" height="14" rx="4" fill="#0066FF" opacity="0.5"/>
-          <rect x="50" y="80" width="80" height="14" rx="4" fill="#0066FF" opacity="0.4"/>
-          <rect x="50" y="100" width="80" height="14" rx="4" fill="#0066FF" opacity="0.3"/>
-          <rect x="44" y="30" width="6" height="24" rx="3" fill="#0066FF" opacity="0.5"/>
-          <rect x="130" y="30" width="6" height="24" rx="3" fill="#0066FF" opacity="0.5"/>
-          <rect x="40" y="26" width="100" height="8" rx="4" fill="#0066FF" opacity="0.55"/>
-          <circle cx="58" cy="135" r="11" fill="#0066FF" opacity="0.4"/>
-          <circle cx="122" cy="135" r="11" fill="#0066FF" opacity="0.4"/>
-          <circle cx="58" cy="135" r="4" fill="#0066FF" opacity="0.7"/>
-          <circle cx="122" cy="135" r="4" fill="#0066FF" opacity="0.7"/>
-        </svg>
-      </span>
-      <div class="popup-title">Menunggu Pengambilan</div>
-      <div class="popup-wad" id="popupWad"></div>
-      <div class="popup-clock-wrap">
-        <div class="popup-clock-label">MASA MENUNGGU</div>
-        <div class="popup-clock" id="popupClock">00:00</div>
-        <div class="popup-clock-sub">dari troli siap hingga diambil</div>
+    <div class="duration" id="durationBox" style="display:none">
+      <div class="duration-row" id="pengiRow" style="display:none">
+        <span id="pengiLabel">Masa pengisian</span><span class="val" id="masaClock">&mdash;</span>
       </div>
-      <div class="popup-desc">Troli ubat telah siap diisi. Sila datang ambil segera.</div>
-      <div id="popupSlaTag" class="popup-sla-tag ok">&#10003; Terima kasih</div>
-      <button class="btn btn-stop" id="popupStopBtn" onclick="stopAlarm()" style="margin-top:16px; display:none;">Hentikan Penggera</button>
+      <div class="duration-row" id="tungguRow" style="display:none">
+        <span id="tungguLabel">Masa menunggu</span><span class="val" id="tungguClock">&mdash;</span>
+      </div>
     </div>
+
+    <div class="footer-note">Kemaskini automatik setiap 10 saat</div>
   </div>
 
   <audio id="alarmSound" loop>
@@ -276,28 +145,21 @@
     var pollInterval, pollFailCount = 0;
     var snoozedUntil = null, SNOOZE_DURATION_MS = 15 * 60 * 1000;
     var statusTerakhir = '';
-    var hantarTimestamp = null, selesaiTimestamp = null;
-    var masaClockInterval = null, respClockInterval = null;
-    var popupShownForCycle = false;
+    var hantarTimestamp = null, selesaiTimestamp = null, ambilTimestamp = null;
+    var masaClockInterval = null, tungguInterval = null;
     var SLA_MS = 4 * 60 * 60 * 1000;
 
     var EVENT_LABEL = {
-      'Hantar Troli':'Troli dihantar ke farmasi',
-      'Pengisian ubat selesai':'Pengisian siap oleh farmasi',
-      'Troli ubat/pesanan ubat telah diambil':'Troli diambil balik ke wad'
-    };
-    var EVENT_ICON = {
-      'Hantar Troli':'ic-hantar',
-      'Pengisian ubat selesai':'ic-selesai',
-      'Troli ubat/pesanan ubat telah diambil':'ic-ambil'
+      'Hantar Troli':'Troli dihantar',
+      'Pengisian ubat selesai':'Pengisian siap',
+      'Troli ubat/pesanan ubat telah diambil':'Troli diambil'
     };
 
     function pad(n){return n<10?'0'+n:n}
 
     function updateClock(){
-      var now=new Date(),h=now.getHours(),m=now.getMinutes(),s=now.getSeconds();
-      document.getElementById('liveClock').innerText=pad(h)+':'+pad(m)+':'+pad(s);
-      var g=h>=5&&h<12?'Selamat Pagi':h>=12&&h<15?'Selamat Tengahari':h>=15&&h<19?'Selamat Petang':'Selamat Malam';
+      var now=new Date(),h=now.getHours();
+      var g=h>=5&&h<12?'Selamat Pagi':h>=12&&h<15?'Selamat Tengah Hari':h>=15&&h<19?'Selamat Petang':'Selamat Malam';
       document.getElementById('greeting').innerText=g;
     }
     updateClock();setInterval(updateClock,1000);
@@ -307,79 +169,63 @@
       return h>0?pad(h)+':'+pad(m)+':'+pad(s):pad(m)+':'+pad(s);
     }
 
-    // MASA PENGISIAN LIVE CLOCK
-    function startMasaClock(fromTs,mode){
+    // MASA PENGISIAN (Hantar -> Selesai)
+    function startMasaClock(fromTs){
       stopMasaClock();
-      var el=document.getElementById('masaClock'),sub=document.getElementById('masaSub');
-      el.className='masa-clock '+(mode==='running'?'running':'done');
+      document.getElementById('pengiLabel').innerText='Masa pengisian';
+      var el=document.getElementById('masaClock');
+      el.className='val';
       masaClockInterval=setInterval(function(){
         var e=Date.now()-fromTs.getTime();
         el.innerText=formatDur(e);
-        if(mode==='running'){
-          var ov=e>SLA_MS;
-          el.className='masa-clock '+(ov?'overdue':'running');
-          sub.innerText=ov?'MELEBIHI PIAGAM 4 JAM':'sedang berjalan';
-        }
+        el.className='val'+(e>SLA_MS?' overdue':'');
       },1000);
     }
     function stopMasaClock(){if(masaClockInterval){clearInterval(masaClockInterval);masaClockInterval=null}}
     function showFinalMasa(fromTs,toTs){
       stopMasaClock();
-      var e=toTs.getTime()-fromTs.getTime(),ov=e>SLA_MS;
-      var el=document.getElementById('masaClock'),sub=document.getElementById('masaSub');
-      el.className='masa-clock done';el.innerText=formatDur(e);
-      sub.innerText=ov?'melebihi piagam':'dalam piagam';
+      document.getElementById('pengiLabel').innerText='Tempoh pengisian';
+      var e=toTs.getTime()-fromTs.getTime();
+      var el=document.getElementById('masaClock');
+      el.innerText=formatDur(e);
+      el.className='val'+(e>SLA_MS?' overdue':' ontime');
     }
     function resetMasaClock(){
       stopMasaClock();
-      document.getElementById('masaClock').className='masa-clock';
       document.getElementById('masaClock').innerText='—';
-      document.getElementById('masaSub').innerText='';
+      document.getElementById('masaClock').className='val';
     }
 
-    // RESPONSIVENESS POPUP
-    function setStopBtnVisible(visible){
-      var btn=document.getElementById('stopBtn');
-      var popupBtn=document.getElementById('popupStopBtn');
-      if(btn)btn.style.display=visible?'block':'none';
-      if(popupBtn)popupBtn.style.display=visible?'block':'none';
-    }
-    function showRespPopup(){
-      if(popupShownForCycle)return;
-      popupShownForCycle=true;
-      stopRespClock();
-      document.getElementById('popupWad').innerText=WAD_NAME;
-      document.getElementById('respPopup').classList.add('active');
-      // Guna selesaiTimestamp (masa farmasi submit "Selesai Isi") sebagai anchor
-      // supaya clock kekal tepat walaupun page di-refresh
-      var anchor=selesaiTimestamp||new Date();
-      updateSlaTag(Date.now()-anchor.getTime());
-      respClockInterval=setInterval(function(){
-        var e=Date.now()-anchor.getTime();
-        document.getElementById('popupClock').innerText=formatDur(e);
-        updateSlaTag(e);
+    // MASA MENUNGGU (Selesai -> Ambil)
+    function startTungguClock(fromTs){
+      stopTungguClock();
+      document.getElementById('tungguLabel').innerText='Masa menunggu';
+      var el=document.getElementById('tungguClock');
+      el.className='val';
+      tungguInterval=setInterval(function(){
+        var e=Date.now()-fromTs.getTime();
+        el.innerText=formatDur(e);
+        el.className='val'+(e>=20*60000?' overdue':'');
       },1000);
     }
-    function updateSlaTag(ms){
-      var tag=document.getElementById('popupSlaTag'),mins=Math.floor(ms/60000);
-      if(mins<10){tag.className='popup-sla-tag ok';tag.innerHTML='&#10003; Terima kasih';}
-      else if(mins<20){tag.className='popup-sla-tag warn';tag.innerHTML='&#9888; '+mins+' minit menunggu';}
-      else{tag.className='popup-sla-tag over';tag.innerHTML='&#9888; '+mins+' minit &mdash; lambat';}
+    function stopTungguClock(){if(tungguInterval){clearInterval(tungguInterval);tungguInterval=null}}
+    function showFinalTunggu(fromTs,toTs){
+      stopTungguClock();
+      document.getElementById('tungguLabel').innerText='Tempoh menunggu';
+      var e=toTs.getTime()-fromTs.getTime();
+      var el=document.getElementById('tungguClock');
+      el.innerText=formatDur(e);
+      el.className='val'+(e>=20*60000?' overdue':' ontime');
     }
-    function dismissRespPopup(){
-      stopRespClock();
-      document.getElementById('respPopup').classList.remove('active');
-      popupShownForCycle=false;
+    function resetTungguClock(){
+      stopTungguClock();
+      document.getElementById('tungguClock').innerText='—';
+      document.getElementById('tungguClock').className='val';
     }
-    function stopRespClock(){if(respClockInterval){clearInterval(respClockInterval);respClockInterval=null}}
 
-    // PROGRESS TRAIL
-    function updateProgressTrail(state){
-      var si=document.getElementById('stepIsi'),ss=document.getElementById('stepSedia'),se=document.getElementById('stepSelesai');
-      [si,ss,se].forEach(function(s){s.className='progress-step idle-step'});
-      if(state==='MENUNGGU_PENGISIAN')si.className='progress-step active-step';
-      else if(state==='SEDIA_DIAMBIL'){si.className='progress-step done-step';ss.className='progress-step active-step';}
-      else if(state==='SELESAI'){si.className='progress-step done-step';ss.className='progress-step done-step';se.className='progress-step active-step';}
+    function setStopBtnVisible(visible){
+      var btn=document.getElementById('stopBtn');
+      if(btn)btn.style.display=visible?'block':'none';
     }
 
     // TITLE FLASH
@@ -433,7 +279,6 @@
     function handleStatus(res){
       pollFailCount=0;document.getElementById('errbar').style.display='none';
 
-      // TTS Trigger Control
       if(res.currentState!==statusTerakhir){
         bunyikanSuara(WAD_NAME,res.currentState,false);
         statusTerakhir=res.currentState;
@@ -442,58 +287,52 @@
       // Parse timestamps dari timeline
       if(res.timeline&&res.timeline.length>0){
         var base=new Date();base.setSeconds(0);base.setMilliseconds(0);
-        var hEv=null,sEv=null;
+        var hEv=null,sEv=null,aEv=null;
         res.timeline.forEach(function(ev){
           if(ev.event==='Hantar Troli')hEv=ev;
           if(ev.event==='Pengisian ubat selesai')sEv=ev;
+          if(ev.event==='Troli ubat/pesanan ubat telah diambil')aEv=ev;
         });
         if(hEv){var p=hEv.time.split(':'),ts=new Date(base);ts.setHours(parseInt(p[0]));ts.setMinutes(parseInt(p[1]));hantarTimestamp=ts;}
         if(sEv){var p2=sEv.time.split(':'),ts2=new Date(base);ts2.setHours(parseInt(p2[0]));ts2.setMinutes(parseInt(p2[1]));selesaiTimestamp=ts2;}
+        if(aEv){var p3=aEv.time.split(':'),ts3=new Date(base);ts3.setHours(parseInt(p3[0]));ts3.setMinutes(parseInt(p3[1]));ambilTimestamp=ts3;}
       }
 
-      // KPI updates
-      var sMap={'MENUNGGU_PENGISIAN':'Menunggu pengisian','SEDIA_DIAMBIL':'Sedia diambil','SELESAI':'Selesai','TIADA_CYCLE':'Tiada cycle aktif'};
-      document.getElementById('kpiStatus').innerText=sMap[res.currentState]||'-';
-      document.getElementById('kpiLastTime').innerText=res.lastEventTime||'-';
-      document.getElementById('kpiMovementCount').innerText=(res.timeline||[]).length;
-
-      // Masa Pengisian clock
-      if(res.currentState==='MENUNGGU_PENGISIAN'&&hantarTimestamp){startMasaClock(hantarTimestamp,'running');}
-      else if((res.currentState==='SEDIA_DIAMBIL'||res.currentState==='SELESAI')&&hantarTimestamp&&selesaiTimestamp){showFinalMasa(hantarTimestamp,selesaiTimestamp);}
-      else{resetMasaClock();}
-
-      // Progress trail
-      updateProgressTrail(res.currentState);
-
-      // Popup responsiveness
-      if(res.currentState==='SEDIA_DIAMBIL'){showRespPopup();}
-      else{dismissRespPopup();}
-
-      // Hero card, pill, alarm logic
-      var pill=document.getElementById('pill'),pillLabel=document.getElementById('pillLabel');
       var headline=document.getElementById('headline'),subline=document.getElementById('subline');
-      var reminderBox=document.getElementById('reminderBox'),stopBtn=document.getElementById('stopBtn');
-      pill.className='status-pill';reminderBox.style.display='none';
+      var reminderBox=document.getElementById('reminderBox'),alarmBox=document.getElementById('alarmBox');
+      var alarmBody=document.getElementById('alarmBody');
+      var durationBox=document.getElementById('durationBox');
+      var pengiRow=document.getElementById('pengiRow'),tungguRow=document.getElementById('tungguRow');
+
+      reminderBox.style.display='none';
+      alarmBox.style.display='none';
 
       if(res.currentState==='MENUNGGU_PENGISIAN'){
-        pill.classList.add('waiting');pillLabel.innerText='Menunggu pengisian';
         headline.innerText='Troli sedang diisi oleh farmasi';
-        subline.innerText='Dihantar pada '+res.lastEventTime+'. Anda akan dimaklumkan sebaik troli siap.';
+        subline.innerText='Troli dihantar pada '+res.lastEventTime;
         setStopBtnVisible(false);document.getElementById('reenableBtn').style.display='none';stopTitleFlash();
 
+        durationBox.style.display='block';
+        pengiRow.style.display='flex';
+        tungguRow.style.display='none';
+        resetTungguClock();
+        if(hantarTimestamp)startMasaClock(hantarTimestamp);
+
       }else if(res.currentState==='SEDIA_DIAMBIL'){
-        pill.classList.add('ready');pillLabel.innerText='Sedia diambil';
-        headline.innerText='Troli ubat telah siap diisi oleh farmasi';
+        headline.innerText='Menunggu troli diambil';
+        subline.innerText='Pengisian siap pada '+res.lastEventTime;
+
+        alarmBox.style.display='block';
         var nowMs=Date.now(),isSnoozed=snoozedUntil!==null&&nowMs<snoozedUntil;
         if(isSnoozed){
           var mL=Math.ceil((snoozedUntil-nowMs)/60000);
-          subline.innerText='Siap pada '+res.lastEventTime+'. Penggera dibisukan, berbunyi semula dalam ~'+mL+' minit.';
+          alarmBody.innerText='Pengisian ubat telah selesai. Penggera dibisukan, berbunyi semula dalam ~'+mL+' minit.';
         }else{
-          subline.innerText='Siap pada '+res.lastEventTime+'. Sila hantar staff ke Farmasi Pesakit Dalam untuk mengambil troli.';
+          alarmBody.innerText='Pengisian ubat telah selesai. Sila ambil troli di farmasi.';
           if(snoozedUntil!==null){bunyikanSuara(WAD_NAME,res.currentState,true);}
           snoozedUntil=null;
         }
-        if(res.pendingAnomali){reminderBox.style.display='block';reminderBox.innerText='Peringatan mesra: rekod "Hantar Troli" untuk cycle ini tidak dijumpai. Sila pastikan staff wad scan QR setiap kali.';}
+        if(res.pendingAnomali){reminderBox.style.display='block';}
         if(!alarmActive&&!isSnoozed)alarmActive=true;
         if(alarmActive&&!isSnoozed){
           if(soundUnlocked){document.getElementById('alarmSound').play();document.getElementById('reenableBtn').style.display='none';}
@@ -502,35 +341,62 @@
         }else{stopTitleFlash();}
         setStopBtnVisible(true);
 
+        durationBox.style.display='block';
+        pengiRow.style.display='flex';
+        tungguRow.style.display='flex';
+        if(hantarTimestamp&&selesaiTimestamp)showFinalMasa(hantarTimestamp,selesaiTimestamp);
+        if(selesaiTimestamp)startTungguClock(selesaiTimestamp);
+
       }else if(res.currentState==='SELESAI'){
-        pill.classList.add('done');pillLabel.innerText='Selesai';
         headline.innerText='Troli telah diambil balik ke wad';
-        subline.innerText='Diambil pada '+res.lastEventTime+'. Tiada cycle aktif sekarang.';
+        subline.innerText='Diambil pada '+res.lastEventTime;
         alarmActive=false;snoozedUntil=null;
         setStopBtnVisible(false);document.getElementById('reenableBtn').style.display='none';stopTitleFlash();
 
+        durationBox.style.display='block';
+        pengiRow.style.display='flex';
+        tungguRow.style.display='flex';
+        if(hantarTimestamp&&selesaiTimestamp)showFinalMasa(hantarTimestamp,selesaiTimestamp);
+        if(selesaiTimestamp&&ambilTimestamp)showFinalTunggu(selesaiTimestamp,ambilTimestamp);
+        else resetTungguClock();
+
       }else{
-        pill.classList.add('idle');pillLabel.innerText='Tiada cycle aktif';
-        headline.innerText='Belum ada pergerakan troli direkod';
-        subline.innerText='Status akan kemaskini sebaik staff wad menghantar troli ke farmasi.';
+        headline.innerText='Tiada pergerakan troli buat masa ini.';
+        subline.innerText='';
         setStopBtnVisible(false);document.getElementById('reenableBtn').style.display='none';stopTitleFlash();
-        resetMasaClock();hantarTimestamp=null;selesaiTimestamp=null;
+        durationBox.style.display='none';
+        resetMasaClock();resetTungguClock();
+        hantarTimestamp=null;selesaiTimestamp=null;ambilTimestamp=null;
       }
 
-      renderTimeline(res.timeline||[]);
+      renderTimeline(res.timeline||[], res.currentState);
     }
 
-    function renderTimeline(timeline){
+    function renderTimeline(timeline,currentState){
       var list=document.getElementById('timelineList'),empty=document.getElementById('emptyState');
       list.innerHTML='';
-      if(timeline.length===0){empty.style.display='block';return;}
+
+      var pendingLabel=null;
+      if(currentState==='MENUNGGU_PENGISIAN')pendingLabel='Pengisian belum selesai';
+      else if(currentState==='SEDIA_DIAMBIL')pendingLabel='Menunggu troli diambil';
+
+      if(timeline.length===0&&!pendingLabel){empty.style.display='block';return;}
       empty.style.display='none';
-      for(var i=timeline.length-1;i>=0;i--){
-        var ev=timeline[i],li=document.createElement('li');
-        var ic=EVENT_ICON[ev.event]||'ic-hantar',lb=EVENT_LABEL[ev.event]||ev.event;
+
+      timeline.forEach(function(ev){
+        var lb=EVENT_LABEL[ev.event]||ev.event;
         var flag=ev.anomali?'<span class="tl-flag">semak</span>':'';
-        li.innerHTML='<span class="tl-time">'+ev.time+'</span><span class="tl-rail"><span class="tl-dot '+ic+'"></span></span><span class="tl-body"><div class="tl-event">'+lb+flag+'</div><div class="tl-meta">'+ev.nama+' &middot; '+ev.jawatan+'</div></span>';
+        var li=document.createElement('li');
+        li.className='tl-row';
+        li.innerHTML='<span class="tl-time">'+ev.time+'</span><span class="tl-rail"><span class="tl-node"></span></span><span class="tl-content"><div class="tl-title">'+lb+flag+'</div><div class="tl-meta">'+ev.nama+' &middot; '+ev.jawatan+'</div></span>';
         list.appendChild(li);
+      });
+
+      if(pendingLabel){
+        var pli=document.createElement('li');
+        pli.className='tl-row';
+        pli.innerHTML='<span class="tl-time empty">&mdash;</span><span class="tl-rail"><span class="tl-node pending"></span></span><span class="tl-content"><div class="tl-title pending">'+pendingLabel+'</div></span>';
+        list.appendChild(pli);
       }
     }
 
