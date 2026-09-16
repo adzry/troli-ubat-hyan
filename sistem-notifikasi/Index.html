@@ -14,6 +14,9 @@
       --border:#DEDED9;
       --border-light:#E8E8E4;
       --accent-success:#2F6B4F;
+      --accent-blue:#3B82F6;
+      --accent-amber:#B7791F;
+      --accent-amber-soft:#FFF7E6;
       --danger:#B42318;
       --danger-soft:#FBEEEC;
       --button:#111111;
@@ -34,6 +37,10 @@
     .greeting{font-size:14px;font-weight:400;color:var(--text-secondary);margin-bottom:12px}
     .ward{font-size:34px;font-weight:650;letter-spacing:-.01em;color:var(--text-primary);margin-bottom:16px}
     .state-text{font-size:18px;font-weight:550;color:var(--text-primary);margin-bottom:4px}
+    .state-text::before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:8px;vertical-align:middle;background:var(--text-muted)}
+    .state-text.state-waiting::before{background:var(--accent-blue)}
+    .state-text.state-ready::before{background:var(--accent-amber)}
+    .state-text.state-done::before{background:var(--accent-success)}
     .state-meta{font-size:13px;font-weight:400;color:var(--text-secondary)}
     @media(min-width:600px){ .ward{font-size:32px} }
 
@@ -43,8 +50,8 @@
     .anomaly-label{font-size:12px;font-weight:700;color:var(--danger);margin-bottom:4px;letter-spacing:.02em}
     .anomaly-body{font-size:13px;color:var(--text-secondary);line-height:1.5}
 
-    .alarm-box{margin-top:20px;padding:20px;border:1px solid var(--danger);border-radius:12px;background:var(--danger-soft)}
-    .alarm-label{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--danger);margin-bottom:8px}
+    .alarm-box{margin-top:20px;padding:20px;border:1px solid var(--accent-amber);border-radius:12px;background:var(--accent-amber-soft)}
+    .alarm-label{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-amber);margin-bottom:8px}
     .alarm-body{font-size:14px;color:var(--text-primary);line-height:1.55;margin-bottom:16px}
 
     .btn{width:100%;min-height:48px;padding:13px 20px;font-size:14.5px;font-weight:600;font-family:var(--font);border:none;border-radius:8px;cursor:pointer;background:var(--button);color:var(--button-text);transition:opacity .15s ease}
@@ -63,6 +70,9 @@
     .tl-rail{position:relative;width:12px;flex-shrink:0;display:flex;justify-content:center;padding-top:5px}
     .tl-node{width:9px;height:9px;border-radius:50%;background:var(--text-primary);flex-shrink:0;position:relative;z-index:1}
     .tl-node.pending{background:var(--surface);border:1.5px solid var(--text-muted);width:8px;height:8px}
+    .tl-node.ic-hantar{background:var(--accent-blue)}
+    .tl-node.ic-selesai{background:var(--accent-success)}
+    .tl-node.pending.pending-amber{border-color:var(--accent-amber);background:var(--accent-amber-soft)}
     .tl-row:not(:last-child) .tl-rail::after{content:'';position:absolute;top:15px;bottom:-16px;left:50%;width:1px;background:var(--border);transform:translateX(-50%)}
     .tl-row.group-start{margin-top:8px;border-top:1px solid var(--border-light)}
     .tl-row.group-end .tl-rail::after{display:none}
@@ -155,6 +165,12 @@
       'Hantar Troli':'Troli dihantar',
       'Pengisian ubat selesai':'Pengisian siap',
       'Troli ubat/pesanan ubat telah diambil':'Troli diambil'
+    };
+    // Restrained semantic colour per event type -- "Troli diambil" intentionally
+    // has no entry so its node stays neutral-dark (closes the loop back to black).
+    var EVENT_NODE_CLASS = {
+      'Hantar Troli':'ic-hantar',
+      'Pengisian ubat selesai':'ic-selesai'
     };
 
     function pad(n){return n<10?'0'+n:n}
@@ -334,6 +350,7 @@
       alarmBox.style.display='none';
 
       if(res.currentState==='MENUNGGU_PENGISIAN'){
+        headline.className='state-text state-waiting';
         headline.innerText='Troli sedang diisi oleh farmasi';
         subline.innerText='Troli dihantar pada '+res.lastEventTime;
         setStopBtnVisible(false);document.getElementById('reenableBtn').style.display='none';stopTitleFlash();
@@ -345,6 +362,7 @@
         if(hantarTimestamp)startMasaClock(hantarTimestamp);
 
       }else if(res.currentState==='SEDIA_DIAMBIL'){
+        headline.className='state-text state-ready';
         headline.innerText='Menunggu troli diambil';
         subline.innerText='Pengisian siap pada '+res.lastEventTime;
 
@@ -374,6 +392,7 @@
         if(selesaiTimestamp)startTungguClock(selesaiTimestamp);
 
       }else if(res.currentState==='SELESAI'){
+        headline.className='state-text state-done';
         headline.innerText='Troli telah diambil balik ke wad';
         subline.innerText='Diambil pada '+res.lastEventTime;
         alarmActive=false;snoozedUntil=null;
@@ -387,6 +406,7 @@
         else resetTungguClock();
 
       }else{
+        headline.className='state-text';
         headline.innerText='Tiada pergerakan troli buat masa ini.';
         subline.innerText='';
         setStopBtnVisible(false);document.getElementById('reenableBtn').style.display='none';stopTitleFlash();
@@ -420,16 +440,21 @@
         // its group -- suppress its connector so the line doesn't bridge movements.
         var next=timeline[idx+1];
         if(next&&next.event==='Hantar Troli')cls+=' group-end';
+        var nodeCls='tl-node'+(EVENT_NODE_CLASS[ev.event]?(' '+EVENT_NODE_CLASS[ev.event]):'');
         var li=document.createElement('li');
         li.className=cls;
-        li.innerHTML='<span class="tl-time">'+ev.time+'</span><span class="tl-rail"><span class="tl-node"></span></span><span class="tl-content"><div class="tl-title">'+lb+flag+'</div><div class="tl-meta">'+ev.nama+' &middot; '+ev.jawatan+'</div></span>';
+        li.innerHTML='<span class="tl-time">'+ev.time+'</span><span class="tl-rail"><span class="'+nodeCls+'"></span></span><span class="tl-content"><div class="tl-title">'+lb+flag+'</div><div class="tl-meta">'+ev.nama+' &middot; '+ev.jawatan+'</div></span>';
         list.appendChild(li);
       });
 
       if(pendingLabel){
+        // SEDIA_DIAMBIL's pending node gets a restrained amber ring -- it's the
+        // one wait that needs a physical trip to the ward to resolve. The
+        // MENUNGGU_PENGISIAN pending node stays neutral.
+        var pendingCls='tl-node pending'+(currentState==='SEDIA_DIAMBIL'?' pending-amber':'');
         var pli=document.createElement('li');
         pli.className='tl-row';
-        pli.innerHTML='<span class="tl-time empty">&mdash;</span><span class="tl-rail"><span class="tl-node pending"></span></span><span class="tl-content"><div class="tl-title pending">'+pendingLabel+'</div></span>';
+        pli.innerHTML='<span class="tl-time empty">&mdash;</span><span class="tl-rail"><span class="'+pendingCls+'"></span></span><span class="tl-content"><div class="tl-title pending">'+pendingLabel+'</div></span>';
         list.appendChild(pli);
       }
     }
