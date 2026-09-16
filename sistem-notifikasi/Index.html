@@ -171,6 +171,21 @@
       return h>0?pad(h)+':'+pad(m)+':'+pad(s):pad(m)+':'+pad(s);
     }
 
+    // Human-readable, unit-labelled duration -- used for both the live and
+    // frozen "Masa/Tempoh pengisian/menunggu" rows so neither can be misread
+    // as a clock-time (e.g. "03:00"). Minute-granularity by design.
+    function formatDurLabel(ms){
+      var t=Math.floor(ms/1000),h=Math.floor(t/3600),m=Math.floor((t%3600)/60);
+      return h>0?(h+' j '+m+' m'):(m+' min');
+    }
+
+    // Parses an "HH:mm" timeline event time against today's date.
+    function parseEventTime_(ev,base){
+      var p=ev.time.split(':'),ts=new Date(base);
+      ts.setHours(parseInt(p[0]));ts.setMinutes(parseInt(p[1]));
+      return ts;
+    }
+
     // MASA PENGISIAN (Hantar -> Selesai)
     function startMasaClock(fromTs){
       stopMasaClock();
@@ -179,7 +194,7 @@
       el.className='val';
       masaClockInterval=setInterval(function(){
         var e=Date.now()-fromTs.getTime();
-        el.innerText=formatDur(e);
+        el.innerText=formatDurLabel(e);
         el.className='val'+(e>SLA_MS?' overdue':'');
       },1000);
     }
@@ -189,7 +204,7 @@
       document.getElementById('pengiLabel').innerText='Tempoh pengisian';
       var e=toTs.getTime()-fromTs.getTime();
       var el=document.getElementById('masaClock');
-      el.innerText=formatDur(e);
+      el.innerText=formatDurLabel(e);
       el.className='val'+(e>SLA_MS?' overdue':' ontime');
     }
     function resetMasaClock(){
@@ -206,7 +221,7 @@
       el.className='val';
       tungguInterval=setInterval(function(){
         var e=Date.now()-fromTs.getTime();
-        el.innerText=formatDur(e);
+        el.innerText=formatDurLabel(e);
         el.className='val'+(e>=20*60000?' overdue':'');
       },1000);
     }
@@ -216,7 +231,7 @@
       document.getElementById('tungguLabel').innerText='Tempoh menunggu';
       var e=toTs.getTime()-fromTs.getTime();
       var el=document.getElementById('tungguClock');
-      el.innerText=formatDur(e);
+      el.innerText=formatDurLabel(e);
       el.className='val'+(e>=20*60000?' overdue':' ontime');
     }
     function resetTungguClock(){
@@ -286,18 +301,27 @@
         statusTerakhir=res.currentState;
       }
 
-      // Parse timestamps dari timeline
+      // Parse timestamps dari timeline -- discis kepada pergerakan TERKINI sahaja.
+      // "Hantar Troli" paling akhir menandakan permulaan pergerakan semasa; Selesai/
+      // Ambil dicari hanya DARI titik itu ke depan, supaya cap masa pergerakan lepas
+      // tidak pernah tercampur dengan pergerakan semasa (lihat PASS 5A/5B).
       if(res.timeline&&res.timeline.length>0){
         var base=new Date();base.setSeconds(0);base.setMilliseconds(0);
+        var lastHantarIdx=-1;
+        for(var hi=0;hi<res.timeline.length;hi++){
+          if(res.timeline[hi].event==='Hantar Troli')lastHantarIdx=hi;
+        }
+        var scopeStart=lastHantarIdx>=0?lastHantarIdx:0;
         var hEv=null,sEv=null,aEv=null;
-        res.timeline.forEach(function(ev){
+        for(var si=scopeStart;si<res.timeline.length;si++){
+          var ev=res.timeline[si];
           if(ev.event==='Hantar Troli')hEv=ev;
           if(ev.event==='Pengisian ubat selesai')sEv=ev;
           if(ev.event==='Troli ubat/pesanan ubat telah diambil')aEv=ev;
-        });
-        if(hEv){var p=hEv.time.split(':'),ts=new Date(base);ts.setHours(parseInt(p[0]));ts.setMinutes(parseInt(p[1]));hantarTimestamp=ts;}
-        if(sEv){var p2=sEv.time.split(':'),ts2=new Date(base);ts2.setHours(parseInt(p2[0]));ts2.setMinutes(parseInt(p2[1]));selesaiTimestamp=ts2;}
-        if(aEv){var p3=aEv.time.split(':'),ts3=new Date(base);ts3.setHours(parseInt(p3[0]));ts3.setMinutes(parseInt(p3[1]));ambilTimestamp=ts3;}
+        }
+        hantarTimestamp=hEv?parseEventTime_(hEv,base):null;
+        selesaiTimestamp=sEv?parseEventTime_(sEv,base):null;
+        ambilTimestamp=aEv?parseEventTime_(aEv,base):null;
       }
 
       var headline=document.getElementById('headline'),subline=document.getElementById('subline');
