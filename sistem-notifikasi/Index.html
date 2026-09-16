@@ -64,6 +64,8 @@
     .tl-node{width:9px;height:9px;border-radius:50%;background:var(--text-primary);flex-shrink:0;position:relative;z-index:1}
     .tl-node.pending{background:var(--surface);border:1.5px solid var(--text-muted);width:8px;height:8px}
     .tl-row:not(:last-child) .tl-rail::after{content:'';position:absolute;top:15px;bottom:-16px;left:50%;width:1px;background:var(--border);transform:translateX(-50%)}
+    .tl-row.group-start{margin-top:8px;border-top:1px solid var(--border-light)}
+    .tl-row.group-end .tl-rail::after{display:none}
     .tl-time{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--text-primary);font-variant-numeric:tabular-nums;min-width:44px;flex-shrink:0}
     .tl-time.empty{color:transparent}
     .tl-content{flex:1;min-width:0}
@@ -383,11 +385,19 @@
       if(timeline.length===0&&!pendingLabel){empty.style.display='block';return;}
       empty.style.display='none';
 
-      timeline.forEach(function(ev){
+      timeline.forEach(function(ev,idx){
         var lb=EVENT_LABEL[ev.event]||ev.event;
         var flag=ev.anomali?'<span class="tl-flag">semak</span>':'';
+        var cls='tl-row';
+        // Hantar Troli semantically starts a new movement -- mark it so CSS can
+        // add a subtle break, unless it's the very first row (nothing to separate from).
+        if(idx>0&&ev.event==='Hantar Troli')cls+=' group-start';
+        // If the NEXT real event begins a new movement, this row is the last of
+        // its group -- suppress its connector so the line doesn't bridge movements.
+        var next=timeline[idx+1];
+        if(next&&next.event==='Hantar Troli')cls+=' group-end';
         var li=document.createElement('li');
-        li.className='tl-row';
+        li.className=cls;
         li.innerHTML='<span class="tl-time">'+ev.time+'</span><span class="tl-rail"><span class="tl-node"></span></span><span class="tl-content"><div class="tl-title">'+lb+flag+'</div><div class="tl-meta">'+ev.nama+' &middot; '+ev.jawatan+'</div></span>';
         list.appendChild(li);
       });
