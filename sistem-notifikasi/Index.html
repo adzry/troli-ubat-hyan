@@ -14,9 +14,12 @@
       --border:#DEDED9;
       --border-light:#E8E8E4;
       --accent-success:#2F6B4F;
+      --accent-success-soft:#F0F7F3;
       --accent-blue:#3B82F6;
+      --accent-blue-soft:#EFF6FF;
       --accent-amber:#B7791F;
       --accent-amber-soft:#FFF7E6;
+      --neutral-soft:#F3F3F1;
       --danger:#B42318;
       --danger-soft:#FBEEEC;
       --button:#111111;
@@ -79,8 +82,18 @@
     .tl-time{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--text-primary);font-variant-numeric:tabular-nums;min-width:44px;flex-shrink:0}
     .tl-time.empty{color:transparent}
     .tl-content{flex:1;min-width:0}
-    .tl-title{font-size:15px;font-weight:600;color:var(--text-primary);line-height:1.4}
-    .tl-title.pending{color:var(--text-muted);font-weight:500}
+    .tl-title{display:inline-flex;align-items:center;flex-wrap:wrap;max-width:100%;gap:6px;font-size:15px;font-weight:600;color:var(--text-primary);line-height:1.4;padding:4px 8px;border-radius:6px}
+    .tl-title::before{content:'';width:6px;height:6px;border-radius:50%;flex-shrink:0}
+    .tl-title.ic-hantar{background:var(--accent-blue-soft)}
+    .tl-title.ic-hantar::before{background:var(--accent-blue)}
+    .tl-title.ic-selesai{background:var(--accent-success-soft)}
+    .tl-title.ic-selesai::before{background:var(--accent-success)}
+    .tl-title.ic-ambil{background:var(--neutral-soft);border:1px solid var(--border)}
+    .tl-title.ic-ambil::before{background:var(--text-primary)}
+    .tl-title.pending{background:none;padding:0;border-radius:0;color:var(--text-muted);font-weight:500}
+    .tl-title.pending::before{display:none}
+    .tl-title.pending.pending-amber{background:var(--accent-amber-soft);padding:4px 8px;border-radius:6px;color:var(--text-primary);font-weight:600}
+    .tl-title.pending.pending-amber::before{display:block;background:var(--accent-amber)}
     .tl-meta{font-size:13px;color:var(--text-muted);margin-top:2px}
     .tl-flag{margin-left:6px;font-size:11px;font-weight:700;color:var(--danger);text-transform:uppercase;letter-spacing:.02em}
 
@@ -166,11 +179,14 @@
       'Pengisian ubat selesai':'Pengisian siap',
       'Troli ubat/pesanan ubat telah diambil':'Troli diambil'
     };
-    // Restrained semantic colour per event type -- "Troli diambil" intentionally
-    // has no entry so its node stays neutral-dark (closes the loop back to black).
+    // Restrained semantic colour per event type -- shared by both the timeline
+    // node and the event label. "ic-ambil" only has a CSS rule for the label
+    // (neutral tint); the node has no .tl-node.ic-ambil rule, so it stays the
+    // plain neutral-dark fill that closes the loop.
     var EVENT_NODE_CLASS = {
       'Hantar Troli':'ic-hantar',
-      'Pengisian ubat selesai':'ic-selesai'
+      'Pengisian ubat selesai':'ic-selesai',
+      'Troli ubat/pesanan ubat telah diambil':'ic-ambil'
     };
 
     function pad(n){return n<10?'0'+n:n}
@@ -440,21 +456,25 @@
         // its group -- suppress its connector so the line doesn't bridge movements.
         var next=timeline[idx+1];
         if(next&&next.event==='Hantar Troli')cls+=' group-end';
-        var nodeCls='tl-node'+(EVENT_NODE_CLASS[ev.event]?(' '+EVENT_NODE_CLASS[ev.event]):'');
+        var accentCls=EVENT_NODE_CLASS[ev.event]?(' '+EVENT_NODE_CLASS[ev.event]):'';
+        var nodeCls='tl-node'+accentCls;
+        var titleCls='tl-title'+accentCls;
         var li=document.createElement('li');
         li.className=cls;
-        li.innerHTML='<span class="tl-time">'+ev.time+'</span><span class="tl-rail"><span class="'+nodeCls+'"></span></span><span class="tl-content"><div class="tl-title">'+lb+flag+'</div><div class="tl-meta">'+ev.nama+' &middot; '+ev.jawatan+'</div></span>';
+        li.innerHTML='<span class="tl-time">'+ev.time+'</span><span class="tl-rail"><span class="'+nodeCls+'"></span></span><span class="tl-content"><div class="'+titleCls+'">'+lb+flag+'</div><div class="tl-meta">'+ev.nama+' &middot; '+ev.jawatan+'</div></span>';
         list.appendChild(li);
       });
 
       if(pendingLabel){
-        // SEDIA_DIAMBIL's pending node gets a restrained amber ring -- it's the
-        // one wait that needs a physical trip to the ward to resolve. The
-        // MENUNGGU_PENGISIAN pending node stays neutral.
-        var pendingCls='tl-node pending'+(currentState==='SEDIA_DIAMBIL'?' pending-amber':'');
+        // SEDIA_DIAMBIL's pending node/label get a restrained amber treatment --
+        // it's the one wait that needs a physical trip to the ward to resolve.
+        // The MENUNGGU_PENGISIAN pending node/label stay neutral.
+        var pendingAccent=currentState==='SEDIA_DIAMBIL'?' pending-amber':'';
+        var pendingCls='tl-node pending'+pendingAccent;
+        var pendingTitleCls='tl-title pending'+pendingAccent;
         var pli=document.createElement('li');
         pli.className='tl-row';
-        pli.innerHTML='<span class="tl-time empty">&mdash;</span><span class="tl-rail"><span class="'+pendingCls+'"></span></span><span class="tl-content"><div class="tl-title pending">'+pendingLabel+'</div></span>';
+        pli.innerHTML='<span class="tl-time empty">&mdash;</span><span class="tl-rail"><span class="'+pendingCls+'"></span></span><span class="tl-content"><div class="'+pendingTitleCls+'">'+pendingLabel+'</div></span>';
         list.appendChild(pli);
       }
     }
