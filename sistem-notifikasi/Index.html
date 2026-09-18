@@ -48,8 +48,8 @@
 
     .context{padding-top:72px;text-align:center}
     .greeting{font-size:13px;font-weight:400;color:var(--text-secondary);margin-bottom:10px}
-    .ward{font-size:20px;font-weight:550;letter-spacing:-.005em;color:var(--text-primary);margin-bottom:6px;overflow-wrap:break-word}
-    .state-text{font-size:40px;font-weight:800;line-height:1.08;letter-spacing:-.02em;color:var(--text-primary);margin-bottom:10px;text-wrap:balance;overflow-wrap:break-word}
+    .ward{font-size:20px;font-weight:550;letter-spacing:-.005em;color:var(--text-primary);margin:0 auto 6px;max-width:300px;text-wrap:balance;overflow-wrap:break-word}
+    .state-text{font-size:50px;font-weight:700;line-height:1.12;letter-spacing:-.02em;color:var(--text-primary);margin-bottom:10px;text-wrap:balance;overflow-wrap:break-word}
     .state-text::before{content:'';display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:14px;vertical-align:middle;background:var(--text-muted)}
     .state-text.state-waiting::before{background:var(--accent-blue)}
     .state-text.state-ready::before{background:var(--accent-amber)}
@@ -57,8 +57,8 @@
     .state-meta{font-size:13px;font-weight:400;color:var(--text-secondary)}
     @media(min-width:600px){
       .context{padding-top:104px}
-      .ward{font-size:22px}
-      .state-text{font-size:76px}
+      .ward{font-size:22px;max-width:420px}
+      .state-text{font-size:62px}
       .state-text::before{width:14px;height:14px;margin-right:18px}
     }
 
@@ -73,18 +73,30 @@
        so no JS is touched to show/hide it alongside the button; when
        hidden it's removed from the flex line entirely, so `gap` leaves no
        empty placeholder. */
-    .cta-row{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:10px}
+    .cta-row{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:8px}
     .doodle-activation{display:none;flex-shrink:0}
     .notify-primer:has(#startBtn[style*="display: block"]) .doodle-activation{display:block}
-    .doodle-character{width:clamp(80px,22vw,104px);height:auto;display:block}
+    .doodle-character{width:clamp(64px,18vw,88px);height:auto;display:block}
 
-    #startBtn{display:inline-flex;align-items:center;justify-content:center;gap:8px;flex:1 1 auto;width:auto;min-width:0}
+    /* .btn-label carries its own nowrap/font-size so the CTA text can never
+       wrap, independent of the bell icon. Mobile trims doodle width, row
+       gap, button padding, and label size (in that priority order) just
+       enough to keep "Aktifkan Penggera Notifikasi" on one line at 320px;
+       desktop restores the original padding/size once there's room.
+       display needs !important: the existing show/hide JS toggles this
+       same button's inline style="display:none/block" (untouched here),
+       and an inline style always outranks a stylesheet rule, so without
+       it #startBtn would silently fall back to block/inline flow instead
+       of the row layout this whole fix depends on. */
+    #startBtn{display:inline-flex!important;align-items:center;justify-content:center;gap:6px;flex:1 1 auto;width:auto;min-width:0;padding:12px 12px}
     .btn-bell{flex-shrink:0}
+    .btn-label{white-space:nowrap;font-size:13px}
 
     @media(min-width:600px){
-      #startBtn{flex:0 0 auto;width:auto;min-width:280px;margin:0}
+      #startBtn{flex:0 0 auto;width:auto;min-width:280px;margin:0;padding:13px 20px;gap:8px}
       .cta-row{gap:14px}
       .doodle-character{width:clamp(130px,11vw,170px)}
+      .btn-label{font-size:14.5px}
     }
 
     .anomaly-box{max-width:640px;margin:24px auto 0;padding:14px 16px;border-left:3px solid var(--danger);background:var(--danger-soft);border-radius:10px;box-shadow:0 1px 3px rgba(17,17,17,.05)}
@@ -183,7 +195,7 @@
             <path d="M12 3c-1.1 0-2 .9-2 2v.6C7.4 6.4 5.5 8.9 5.5 12v4l-1.8 2.2c-.4.5 0 1.3.6 1.3h15.4c.6 0 1-.8.6-1.3L18.5 16v-4c0-3.1-1.9-5.6-4.5-6.4V5c0-1.1-.9-2-2-2z" stroke="#171717" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M10 20a2 2 0 0 0 4 0" stroke="#171717" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          Aktifkan Penggera Notifikasi
+          <span class="btn-label">Aktifkan Penggera Notifikasi</span>
         </button>
       </div>
     </div>
