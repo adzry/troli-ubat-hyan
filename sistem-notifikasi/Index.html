@@ -49,7 +49,7 @@
     .context{padding-top:72px;text-align:center}
     .greeting{font-size:13px;font-weight:400;color:var(--text-secondary);margin-bottom:10px}
     .ward{font-size:20px;font-weight:550;letter-spacing:-.005em;color:var(--text-primary);margin:0 auto 6px;max-width:300px;text-wrap:balance;overflow-wrap:break-word}
-    .state-text{font-size:44px;font-weight:700;line-height:1.10;letter-spacing:-.02em;color:var(--text-primary);margin-bottom:10px;text-wrap:balance;overflow-wrap:break-word}
+    .state-text{font-size:38px;font-weight:700;line-height:1.10;letter-spacing:-.02em;color:var(--text-primary);margin-bottom:10px;text-wrap:balance;overflow-wrap:break-word}
     .state-text::before{content:'';display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:14px;vertical-align:middle;background:var(--text-muted)}
     .state-text.state-waiting::before{background:var(--accent-blue)}
     .state-text.state-ready::before{background:var(--accent-amber)}
@@ -58,7 +58,15 @@
     @media(min-width:600px){
       .context{padding-top:104px}
       .ward{font-size:22px;max-width:420px}
-      .state-text{font-size:62px;line-height:1.12}
+      /* .shell caps out at 760px (720px content), which is too narrow for
+         the default sentence to fit on one line at 52px (needs ~865px).
+         Desktop has real spare width, so the headline alone breaks out to
+         the full viewport width here (standard full-bleed pattern, vw
+         units so it's viewport- not parent-relative) -- text-align:center
+         (inherited from .context) then centers the actual line of text
+         within that wide box, which visually reads as "centered on the
+         page", same as before. Nothing else in .context/.shell changes. */
+      .state-text{font-size:52px;line-height:1.10;width:100vw;max-width:100vw;position:relative;left:50%;margin-left:-50vw}
       .state-text::before{width:14px;height:14px;margin-right:18px}
     }
 
@@ -76,7 +84,14 @@
     .cta-row{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:8px}
     .doodle-activation{display:none;flex-shrink:0}
     .notify-primer:has(#startBtn[style*="display: block"]) .doodle-activation{display:block}
-    .doodle-character{width:clamp(64px,18vw,88px);height:auto;display:block}
+    /* 70px is the empirically-verified max safe width at 320px before the
+       CTA label (unchanged: still 13px, still nowrap) starts overflowing
+       its box; a plain vw clamp can't reach 100px+ by 360px without
+       already blowing that 320px budget, so this uses an explicit
+       two-point fluid formula (70px@320 -> 105px@360, flat afterwards)
+       instead of one linear vw term. Verified overflow-free at every
+       10px step from 320-599px. */
+    .doodle-character{width:clamp(70px,87.5vw - 210px,105px);height:auto;display:block}
 
     /* .btn-label carries its own nowrap/font-size so the CTA text can never
        wrap, independent of the bell icon. Mobile trims doodle width, row
