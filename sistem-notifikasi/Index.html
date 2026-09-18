@@ -85,9 +85,29 @@
     /* Quiet explanatory line for the activation control -- same family as
        .state-meta (13px/secondary), not a card/container, just a centered
        caption under the CTA row. One static sentence covers both the
-       inactive and active button states, so no copy variants needed. */
-    .notify-caption{font-size:13px;font-weight:400;color:var(--text-secondary);line-height:1.5;max-width:300px;margin:10px auto 0;text-wrap:balance;overflow-wrap:break-word}
-    @media(min-width:600px){ .notify-caption{max-width:440px} }
+       inactive and active button states, so no copy variants needed.
+       Width is kept close to the button's own rendered width (not the
+       full .notify-primer column) so it reads as attached to the CTA
+       rather than a separate wide paragraph.
+       margin-top is NOT a plain gap from #startBtn: the caption sits
+       after .cta-row in flow, and .cta-row's flex box (align-items:
+       center, unchanged) is as tall as its tallest child -- the doodle,
+       whose own width (hence height) already varies 70px->105px between
+       320-360px, then holds flat to 599px. Left as a flat value, the
+       visible button-to-caption gap would balloon well past 16px at
+       360px+. So this mirrors the doodle's existing two-point fluid
+       technique (see .doodle-character below) to anti-compensate: as
+       the doodle grows 320->360px, margin-top shrinks 12px->-1px,
+       holding the actual button-to-caption gap at ~14px throughout,
+       then clamps flat (doodle plateaus at 105px past 360px too). */
+    .notify-caption{font-size:13px;font-weight:400;color:var(--text-secondary);line-height:1.5;max-width:260px;margin:clamp(-1px, calc(116px - 32.5vw), 12px) auto 0;text-wrap:balance;overflow-wrap:break-word}
+    @media(min-width:600px){
+      /* Desktop doodle floors at 130px (clamp(130px,11vw,170px) stays at
+         its 130px minimum until ~1182px), so the same ~24px extra height
+         above #startBtn is flat across the whole practical desktop range;
+         a single static value holds the gap at ~12-16px through 1280px. */
+      .notify-caption{max-width:300px;margin-top:-12px}
+    }
     .doodle-activation{display:none;flex-shrink:0}
     .notify-primer:has(#startBtn[style*="display: block"]) .doodle-activation{display:block}
     /* 70px is the empirically-verified max safe width at 320px before the
