@@ -82,6 +82,12 @@
        hidden it's removed from the flex line entirely, so `gap` leaves no
        empty placeholder. */
     .cta-row{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:8px}
+    /* Quiet explanatory line for the activation control -- same family as
+       .state-meta (13px/secondary), not a card/container, just a centered
+       caption under the CTA row. One static sentence covers both the
+       inactive and active button states, so no copy variants needed. */
+    .notify-caption{font-size:13px;font-weight:400;color:var(--text-secondary);line-height:1.5;max-width:300px;margin:10px auto 0;text-wrap:balance;overflow-wrap:break-word}
+    @media(min-width:600px){ .notify-caption{max-width:440px} }
     .doodle-activation{display:none;flex-shrink:0}
     .notify-primer:has(#startBtn[style*="display: block"]) .doodle-activation{display:block}
     /* 70px is the empirically-verified max safe width at 320px before the
@@ -213,9 +219,10 @@
             <path d="M12 3c-1.1 0-2 .9-2 2v.6C7.4 6.4 5.5 8.9 5.5 12v4l-1.8 2.2c-.4.5 0 1.3.6 1.3h15.4c.6 0 1-.8.6-1.3L18.5 16v-4c0-3.1-1.9-5.6-4.5-6.4V5c0-1.1-.9-2-2-2z" stroke="#171717" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M10 20a2 2 0 0 0 4 0" stroke="#171717" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          <span class="btn-label">Aktifkan Penggera Notifikasi</span>
+          <span class="btn-label" id="startBtnLabel">Aktifkan Penggera Notifikasi</span>
         </button>
       </div>
+      <div class="notify-caption">Penggera akan berbunyi sebaik sahaja troli ubat sudah siap diisi oleh pihak farmasi.</div>
     </div>
 
     <div class="anomaly-box" id="reminderBox" style="display:none">
@@ -257,7 +264,7 @@
 
   <script>
     var WAD_NAME = <?!= JSON.stringify(wadName) ?>;
-    var alarmActive = false, soundUnlocked = false;
+    var alarmActive = false, soundUnlocked = false, notifActive = false;
     var pollInterval, pollFailCount = 0;
     var snoozedUntil = null, SNOOZE_DURATION_MS = 15 * 60 * 1000;
     var statusTerakhir = '';
@@ -414,7 +421,22 @@
     }
 
     function reenableSound(){unlockAudio();setTimeout(function(){if(soundUnlocked&&alarmActive)document.getElementById('alarmSound').play();},200);}
-    function startSystem(){document.getElementById('startBtn').style.display='none';unlockAudio();refreshStatus();}
+    // Notification activation is a standalone, day-long preference -- independent
+    // of workflow state (a cycle may not exist yet) and never reset by handleStatus().
+    // The control stays visible/clickable rather than disappearing; this just
+    // guards against a stray re-click re-running unlockAudio()/announce().
+    function updateActivationUI(){
+      var lbl=document.getElementById('startBtnLabel');
+      if(lbl)lbl.textContent=notifActive?'Penggera Aktif':'Aktifkan Penggera Notifikasi';
+    }
+    function startSystem(){
+      if(notifActive)return;
+      notifActive=true;
+      updateActivationUI();
+      unlockAudio();
+      announce('Penggera Aktif');
+      refreshStatus();
+    }
     function stopAlarm(){
       var a=document.getElementById('alarmSound');a.pause();a.currentTime=0;
       alarmActive=false;snoozedUntil=Date.now()+SNOOZE_DURATION_MS;
