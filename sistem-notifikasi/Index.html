@@ -65,6 +65,15 @@
     .notify-primer{margin-top:28px;text-align:center}
     @media(min-width:600px){ .notify-primer .btn{width:auto;min-width:280px;margin-left:auto;margin-right:auto} }
 
+    /* Doodle only appears once #startBtn is the live CTA (inline display:block);
+       CSS :has() mirrors that state without touching the existing show/hide JS. */
+    .cta-doodle-wrap{display:none;margin:0 auto 6px;line-height:0}
+    .notify-primer:has(#startBtn[style*="display: block"]) .cta-doodle-wrap{display:block}
+    .cta-doodle{width:clamp(56px,16vw,80px);height:auto;max-width:100%}
+
+    #startBtn{display:inline-flex;align-items:center;justify-content:center;gap:8px}
+    .btn-bell{flex-shrink:0}
+
     .anomaly-box{max-width:640px;margin:24px auto 0;padding:14px 16px;border-left:3px solid var(--danger);background:var(--danger-soft);border-radius:10px;box-shadow:0 1px 3px rgba(17,17,17,.05)}
     .anomaly-label{font-size:12px;font-weight:700;color:var(--danger);margin-bottom:4px;letter-spacing:.02em}
     .anomaly-body{font-size:13px;color:var(--text-secondary);line-height:1.5}
@@ -135,7 +144,27 @@
     </div>
 
     <div class="notify-primer">
-      <button id="startBtn" class="btn" onclick="startSystem()" style="display:none">Aktifkan Penggera Notifikasi</button>
+      <div class="cta-doodle-wrap" aria-hidden="true">
+        <svg class="cta-doodle" viewBox="0 0 88 96" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false">
+          <path d="M44 8c9 0 15 6 15 15 0 10-7 17-15 17S29 33 29 23c0-9 6-15 15-15z" stroke="#6B6B6B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="38" cy="21" r="1.6" fill="#6B6B6B"/>
+          <circle cx="49" cy="21" r="1.6" fill="#6B6B6B"/>
+          <path d="M38 28c2 2.5 8 2.5 10 0" stroke="#6B6B6B" stroke-width="2" stroke-linecap="round" fill="none"/>
+          <path d="M25 78c1-16 8-27 19-27s18 11 19 27" stroke="#6B6B6B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <path d="M44 45v10M39 50h10" stroke="#3B82F6" stroke-width="2.4" stroke-linecap="round"/>
+          <path d="M58 58c7 3 12 9 13 17" stroke="#6B6B6B" stroke-width="2" stroke-linecap="round" fill="none"/>
+          <path d="M69 73l3 4-5 1" stroke="#6B6B6B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <path d="M72 78c-3 6-6 10-8 14" stroke="#F4A261" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="1 6" fill="none"/>
+          <path d="M60 89l4 4 5-3" stroke="#F4A261" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        </svg>
+      </div>
+      <button id="startBtn" class="btn" onclick="startSystem()" style="display:none">
+        <svg class="btn-bell" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+          <path d="M12 3c-1.1 0-2 .9-2 2v.6C7.4 6.4 5.5 8.9 5.5 12v4l-1.8 2.2c-.4.5 0 1.3.6 1.3h15.4c.6 0 1-.8.6-1.3L18.5 16v-4c0-3.1-1.9-5.6-4.5-6.4V5c0-1.1-.9-2-2-2z" stroke="#171717" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M10 20a2 2 0 0 0 4 0" stroke="#171717" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Aktifkan Penggera Notifikasi
+      </button>
     </div>
 
     <div class="anomaly-box" id="reminderBox" style="display:none">
