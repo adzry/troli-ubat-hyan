@@ -82,32 +82,39 @@
        hidden it's removed from the flex line entirely, so `gap` leaves no
        empty placeholder. */
     .cta-row{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:8px}
+    /* .cta-stack wraps #startBtn + .notify-caption so the caption is
+       structurally (and visually) attached to the BUTTON, not to the row.
+       It takes over #startBtn's old flex-grow/shrink role (see #startBtn
+       below) so the button's own on-screen width/position are unchanged;
+       .cta-row still only ever centers doodle-vs-stack the same way it
+       used to center doodle-vs-button, because .notify-caption is
+       position:absolute and therefore contributes nothing to .cta-stack's
+       box (and therefore nothing to .cta-row's flex height) -- the doodle's
+       position relative to the CTA is untouched. */
+    .cta-stack{position:relative;flex:1 1 auto;min-width:0}
     /* Quiet explanatory line for the activation control -- same family as
-       .state-meta (13px/secondary), not a card/container, just a centered
-       caption under the CTA row. One static sentence covers both the
-       inactive and active button states, so no copy variants needed.
-       Width is kept close to the button's own rendered width (not the
-       full .notify-primer column) so it reads as attached to the CTA
-       rather than a separate wide paragraph.
-       margin-top is NOT a plain gap from #startBtn: the caption sits
-       after .cta-row in flow, and .cta-row's flex box (align-items:
-       center, unchanged) is as tall as its tallest child -- the doodle,
-       whose own width (hence height) already varies 70px->105px between
-       320-360px, then holds flat to 599px. Left as a flat value, the
-       visible button-to-caption gap would balloon well past 16px at
-       360px+. So this mirrors the doodle's existing two-point fluid
-       technique (see .doodle-character below) to anti-compensate: as
-       the doodle grows 320->360px, margin-top shrinks 12px->-1px,
-       holding the actual button-to-caption gap at ~14px throughout,
-       then clamps flat (doodle plateaus at 105px past 360px too). */
-    .notify-caption{font-size:13px;font-weight:400;color:var(--text-secondary);line-height:1.5;max-width:260px;margin:clamp(-1px, calc(116px - 32.5vw), 12px) auto 0;text-wrap:balance;overflow-wrap:break-word}
-    @media(min-width:600px){
-      /* Desktop doodle floors at 130px (clamp(130px,11vw,170px) stays at
-         its 130px minimum until ~1182px), so the same ~24px extra height
-         above #startBtn is flat across the whole practical desktop range;
-         a single static value holds the gap at ~12-16px through 1280px. */
-      .notify-caption{max-width:300px;margin-top:-12px}
-    }
+       .state-meta (13px/secondary), not a card/container. Positioned
+       directly off #startBtn's own box (top:100% of .cta-stack, which
+       equals the button's box) rather than via a margin measured from
+       .cta-row, so the button-to-caption gap is a real, simple constant
+       at every breakpoint -- no more anti-compensating for the doodle's
+       height. Centered on the button via left:50%/translateX(-50%);
+       width:max-content keeps it sized to its own content instead of the
+       browser's absolute-positioning shrink-to-fit (which would measure
+       from the 50% offset, not the stack's true width). One static
+       sentence covers both the inactive and active button states. */
+    /* max-width:100% is relative to .cta-stack (the positioning container,
+       set above) -- on mobile #startBtn flex-grows to fill the row (its
+       right edge always lands exactly on .shell's own right padding edge),
+       so .cta-stack's width always equals the button's width exactly.
+       Capping the caption there guarantees it can never extend past the
+       button's own footprint -- which is itself always inside .shell's
+       safe area -- however far off-centre .cta-stack sits within the page
+       (the doodle pushes it right of the true viewport centre). A fixed
+       px value can't give that guarantee: it broke at 320/360px, where
+       the button (hence .cta-stack) is narrower than a fixed 260px. */
+    .notify-caption{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:15px;width:max-content;max-width:100%;font-size:13px;font-weight:400;color:var(--text-secondary);line-height:1.5;text-wrap:balance;overflow-wrap:break-word}
+    @media(min-width:600px){ .notify-caption{max-width:300px} }
     .doodle-activation{display:none;flex-shrink:0}
     .notify-primer:has(#startBtn[style*="display: block"]) .doodle-activation{display:block}
     /* 70px is the empirically-verified max safe width at 320px before the
@@ -129,12 +136,13 @@
        and an inline style always outranks a stylesheet rule, so without
        it #startBtn would silently fall back to block/inline flow instead
        of the row layout this whole fix depends on. */
-    #startBtn{display:inline-flex!important;align-items:center;justify-content:center;gap:6px;flex:1 1 auto;width:auto;min-width:0;padding:12px 12px}
+    #startBtn{display:inline-flex!important;align-items:center;justify-content:center;gap:6px;padding:12px 12px}
     .btn-bell{flex-shrink:0}
     .btn-label{white-space:nowrap;font-size:13px}
 
     @media(min-width:600px){
-      #startBtn{flex:0 0 auto;width:auto;min-width:280px;margin:0;padding:13px 20px;gap:8px}
+      .cta-stack{flex:0 0 auto;min-width:280px}
+      #startBtn{margin:0;padding:13px 20px;gap:8px}
       .cta-row{gap:14px}
       .doodle-character{width:clamp(130px,11vw,170px)}
       .btn-label{font-size:14.5px}
@@ -234,15 +242,17 @@
             aria-hidden="true"
           >
         </div>
-        <button id="startBtn" class="btn" onclick="startSystem()" style="display:none">
-          <svg class="btn-bell" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
-            <path d="M12 3c-1.1 0-2 .9-2 2v.6C7.4 6.4 5.5 8.9 5.5 12v4l-1.8 2.2c-.4.5 0 1.3.6 1.3h15.4c.6 0 1-.8.6-1.3L18.5 16v-4c0-3.1-1.9-5.6-4.5-6.4V5c0-1.1-.9-2-2-2z" stroke="#171717" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M10 20a2 2 0 0 0 4 0" stroke="#171717" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <span class="btn-label" id="startBtnLabel">Aktifkan Penggera Notifikasi</span>
-        </button>
+        <div class="cta-stack">
+          <button id="startBtn" class="btn" onclick="startSystem()" style="display:none">
+            <svg class="btn-bell" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+              <path d="M12 3c-1.1 0-2 .9-2 2v.6C7.4 6.4 5.5 8.9 5.5 12v4l-1.8 2.2c-.4.5 0 1.3.6 1.3h15.4c.6 0 1-.8.6-1.3L18.5 16v-4c0-3.1-1.9-5.6-4.5-6.4V5c0-1.1-.9-2-2-2z" stroke="#171717" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M10 20a2 2 0 0 0 4 0" stroke="#171717" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="btn-label" id="startBtnLabel">Aktifkan Penggera Notifikasi</span>
+          </button>
+          <div class="notify-caption">Penggera akan berbunyi sebaik sahaja troli ubat sudah siap diisi oleh pihak farmasi.</div>
+        </div>
       </div>
-      <div class="notify-caption">Penggera akan berbunyi sebaik sahaja troli ubat sudah siap diisi oleh pihak farmasi.</div>
     </div>
 
     <div class="anomaly-box" id="reminderBox" style="display:none">
