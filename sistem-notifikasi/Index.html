@@ -64,24 +64,26 @@
 
     .notify-primer{margin-top:28px;text-align:center}
 
-    /* Activation doodle: sits above the CTA on mobile (the button is
-       width:100% there, so there's no horizontal room beside it) and to its
-       left on desktop, once .btn's own width:auto/min-width kicks in. The
-       artwork's own pointing hand already reads clearly, so no separate
-       arrow element is added.
+    /* Activation doodle: sits beside the CTA in a row at every breakpoint
+       (mobile included -- #startBtn gives up its usual width:100% and
+       flexes to fill the remaining row width instead). The artwork's own
+       pointing hand already reads clearly, so no separate arrow element
+       is added.
        Visibility mirrors #startBtn's own inline display style via :has(),
-       so no JS is touched to show/hide it alongside the button. */
-    .cta-row{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
-    .doodle-activation{display:none}
+       so no JS is touched to show/hide it alongside the button; when
+       hidden it's removed from the flex line entirely, so `gap` leaves no
+       empty placeholder. */
+    .cta-row{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:10px}
+    .doodle-activation{display:none;flex-shrink:0}
     .notify-primer:has(#startBtn[style*="display: block"]) .doodle-activation{display:block}
-    .doodle-character{width:clamp(84px,24vw,104px);height:auto;display:block}
+    .doodle-character{width:clamp(80px,22vw,104px);height:auto;display:block}
 
-    #startBtn{display:inline-flex;align-items:center;justify-content:center;gap:8px}
+    #startBtn{display:inline-flex;align-items:center;justify-content:center;gap:8px;flex:1 1 auto;width:auto;min-width:0}
     .btn-bell{flex-shrink:0}
 
     @media(min-width:600px){
-      .notify-primer .btn{width:auto;min-width:280px;margin:0}
-      .cta-row{flex-direction:row;justify-content:center;align-items:center;gap:14px}
+      #startBtn{flex:0 0 auto;width:auto;min-width:280px;margin:0}
+      .cta-row{gap:14px}
       .doodle-character{width:clamp(130px,11vw,170px)}
     }
 
@@ -131,6 +133,18 @@
     .empty-state{padding:32px 4px;color:var(--text-muted);font-size:13px;line-height:1.6}
 
     .duration{max-width:640px;margin:16px auto 0;padding-top:20px;border-top:1px solid var(--border-light)}
+
+    /* Nudge the operational workspace (as a block) slightly right of true
+       centre so it feels less detached from the centered hero/CTA above --
+       internal content (heading, timeline rows, duration values) stays
+       exactly as left-aligned/right-aligned as before. Gated to >=800px,
+       where .shell has already hit its 760px max-width and so has a fixed
+       720px content box (720-640=80px to split), so the split is a plain
+       literal value with no calc() edge cases at narrower widths. */
+    @media(min-width:800px){
+      .section-heading,.timeline-card,.duration{margin-left:68px;margin-right:12px}
+    }
+
     .duration-row{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--text-secondary);padding:5px 0}
     .duration-row .val{font-family:var(--mono);font-weight:600;color:var(--text-primary);font-variant-numeric:tabular-nums}
     .duration-row .val.overdue{color:var(--danger)}
