@@ -58,27 +58,32 @@ function doGet(e) {
 }
 
 
-// ====== MAIN AGGREGATION FUNCTION ======
+// ====== MAIN AGGREGATION FUNCTION (Phase 9H -- cutover-aware) ======
 // startDate, endDate: string format 'yyyy-MM-dd' (dari <input type="date">)
+//
+// Cycle-derived metrics (totalCycles, patuh/lewat, avgDurasi, avgTunggu,
+// dailyTrend, lateList, anomali) are NEVER blended across the canonical
+// cutover boundary (Phase 8 correction §6). Raw event totals (totalEvents,
+// eventCountByType, wadEventCount, rawLog) are cutover-INSENSITIVE and
+// stay continuous, since Log_Troli's shape does not change at cutover.
 function getDashboardData(startDate, endDate) {
   var id = PropertiesService.getScriptProperties().getProperty('DB_ID');
   if (!id) return { error: 'Belum disambungkan ke database. Sila run connectToExistingSheet() dahulu.' };
 
   var ss = SpreadsheetApp.openById(id);
   var logSheet = ss.getSheetByName(SHEET_LOG_NAME);
-  var slaSheet = ss.getSheetByName(SHEET_SLA_NAME);
 
   var tz = 'Asia/Kuala_Lumpur';
   var rangeStart = parseDateStart(startDate, tz);
   var rangeEnd = parseDateEnd(endDate, tz);
 
-  // ---- 1. Baca Log_Troli, filter ikut date range ----
+  // ---- 1. Baca Log_Troli, filter ikut date range (CONTINUOUS -- tidak
+  // sensitif kepada cutover, sebab bentuk Log_Troli tidak berubah). ----
   var logLastRow = logSheet.getLastRow();
-  var logRows = logLastRow >= 2 ? logSheet.getRange(2, 1, logLastRow - 1, 7).getValues() : [];
+  var logRows = logLastRow >= 2 ? logSheet.getRange(2, 1, logLastRow - 1, 8).getValues() : [];
 
   var totalEvents = 0;
-  var anomaliCount = 0;
-  var eventCountByType = { };
+  var eventCountByType = {};
   eventCountByType[EVENT_HANTAR] = 0;
   eventCountByType[EVENT_SELESAI] = 0;
   eventCountByType[EVENT_AMBIL] = 0;
@@ -97,136 +102,37 @@ function getDashboardData(startDate, endDate) {
 
     var wad = row[COL.WAD];
     if (wadEventCount.hasOwnProperty(wad)) wadEventCount[wad]++;
-
-    var status = row[COL.STATUS_VALIDASI];
-    if (status && status.toString().indexOf('ANOMALI') === 0) anomaliCount++;
   }
 
-  // ---- 2. Baca SLA_Summary, filter ikut date range (guna Masa Hantar sebagai anchor tarikh) ----
-  var slaLastRow = slaSheet.getLastRow();
-  var slaRows = slaLastRow >= 2 ? slaSheet.getRange(2, 1, slaLastRow - 1, 8).getValues() : [];
+  // ---- 2. Tentukan mod julat berbanding cutover ----
+  var cutover = getCutoverTimestamp2_(ss);
+  var split = splitRangeAtCutover_(rangeStart, rangeEnd, cutover);
 
-  var totalCycles = 0;
-  var patuhCount = 0;
-  var lewatCount = 0;
-  var totalDurasiPengisian = 0;
-  var totalDurasiTunggu = 0;
-  var cyclesWithTunggu = 0;
+  var legacy = split.legacy ? computeLegacyCycleMetrics_(ss, tz, split.legacy.start, split.legacy.end) : null;
+  var canonical = split.canonical ? getCanonicalCycleMetrics_(ss, tz, split.canonical.start, split.canonical.end) : null;
+  var canonicalAnomaliList = split.canonical ? getCanonicalAnomaliList_(ss, tz, split.canonical.start, split.canonical.end) : null;
 
-  var wadStats = {};
-  WAD_LIST.forEach(function (w) {
-    wadStats[w] = { cycles: 0, patuh: 0, lewat: 0, totalDurasi: 0, totalTunggu: 0, tungguCount: 0 };
+  // wadComparison (event-count portion is continuous; cycle portion is
+  // split exactly like everything else above -- built per-regime below,
+  // never combined into a single blended per-ward cycle figure).
+  var wadComparisonEventCounts = WAD_LIST.map(function (w) {
+    return { wad: w, isTrolleyWard: TROLLEY_WADS.indexOf(w) > -1, eventCount: wadEventCount[w] };
   });
-
-  var dailyMap = {}; // { 'dd/MM' : { cycles, patuh, lewat } }
-  var lateList = []; // senarai cycle yang lewat, untuk jadual
-
-  for (var j = 0; j < slaRows.length; j++) {
-    var srow = slaRows[j];
-    var sWad = srow[0];
-    var sMasaHantar = srow[2] ? new Date(srow[2]) : null;
-    var sMasaSelesai = srow[3] ? new Date(srow[3]) : null;
-    var sDurasi = parseFloat(srow[4]) || 0;
-    var sStatusSla = srow[5];
-    var sMasaAmbil = srow[6] ? new Date(srow[6]) : null;
-    var sDurasiTunggu = srow[7] !== '' ? parseFloat(srow[7]) : null;
-
-    if (!sMasaHantar || sMasaHantar < rangeStart || sMasaHantar > rangeEnd) continue;
-
-    totalCycles++;
-    var isPatuh = sStatusSla && sStatusSla.toString().indexOf('PATUH') === 0;
-    if (isPatuh) patuhCount++; else lewatCount++;
-    totalDurasiPengisian += sDurasi;
-
-    if (sDurasiTunggu !== null) {
-      totalDurasiTunggu += sDurasiTunggu;
-      cyclesWithTunggu++;
-    }
-
-    if (wadStats.hasOwnProperty(sWad)) {
-      wadStats[sWad].cycles++;
-      if (isPatuh) wadStats[sWad].patuh++; else wadStats[sWad].lewat++;
-      wadStats[sWad].totalDurasi += sDurasi;
-      if (sDurasiTunggu !== null) {
-        wadStats[sWad].totalTunggu += sDurasiTunggu;
-        wadStats[sWad].tungguCount++;
-      }
-    }
-
-    var dayKey = Utilities.formatDate(sMasaHantar, tz, 'dd/MM');
-    if (!dailyMap[dayKey]) dailyMap[dayKey] = { cycles: 0, patuh: 0, lewat: 0, sortKey: sMasaHantar.getTime() };
-    dailyMap[dayKey].cycles++;
-    if (isPatuh) dailyMap[dayKey].patuh++; else dailyMap[dayKey].lewat++;
-
-    if (!isPatuh) {
-      lateList.push({
-        wad: sWad,
-        tarikh: Utilities.formatDate(sMasaHantar, tz, 'dd/MM/yyyy'),
-        masaHantar: Utilities.formatDate(sMasaHantar, tz, 'HH:mm'),
-        masaSelesai: sMasaSelesai ? Utilities.formatDate(sMasaSelesai, tz, 'HH:mm') : '-',
-        durasi: sDurasi
-      });
-    }
-  }
-
-  // ---- 3. Bentuk array harian tersusun ikut tarikh ----
-  var dailyTrend = Object.keys(dailyMap).map(function (k) {
-    return { label: k, cycles: dailyMap[k].cycles, patuh: dailyMap[k].patuh, lewat: dailyMap[k].lewat, sortKey: dailyMap[k].sortKey };
-  }).sort(function (a, b) { return a.sortKey - b.sortKey; });
-
-  // ---- 4. Bentuk perbandingan ikut wad/unit (SLA applies sama rata untuk semua 13) ----
-  var wadComparison = WAD_LIST.map(function (w) {
-    var s = wadStats[w];
-    var isTrolleyWard = TROLLEY_WADS.indexOf(w) > -1; // kekal untuk label/kategori visual sahaja
-    return {
-      wad: w,
-      isTrolleyWard: isTrolleyWard,
-      cycles: s.cycles,
-      patuh: s.patuh,
-      lewat: s.lewat,
-      patuhRate: s.cycles > 0 ? Math.round((s.patuh / s.cycles) * 100) : -1,
-      avgDurasi: s.cycles > 0 ? (s.totalDurasi / s.cycles).toFixed(2) : -1,
-      avgTunggu: s.tungguCount > 0 ? (s.totalTunggu / s.tungguCount).toFixed(2) : -1,
-      eventCount: wadEventCount[w]
-    };
-  });
-
-  // ---- 5. Senarai anomali (untuk tab SLA & Anomali) ----
-  var anomaliList = [];
-  for (var k = 0; k < logRows.length; k++) {
-    var arow = logRows[k];
-    var ats = new Date(arow[COL.TIMESTAMP]);
-    if (ats < rangeStart || ats > rangeEnd) continue;
-    var astatus = arow[COL.STATUS_VALIDASI];
-    if (astatus && astatus.toString().indexOf('ANOMALI') === 0) {
-      anomaliList.push({
-        tarikh: Utilities.formatDate(ats, tz, 'dd/MM/yyyy'),
-        masa: Utilities.formatDate(ats, tz, 'HH:mm'),
-        wad: arow[COL.WAD],
-        event: arow[COL.EVENT],
-        nama: arow[COL.NAMA],
-        sebab: astatus
-      });
-    }
-  }
-  anomaliList.sort(function (a, b) { return b.tarikh.localeCompare(a.tarikh) || b.masa.localeCompare(a.masa); });
 
   return {
+    rangeMode: split.mode, // 'legacy' | 'canonical' | 'mixed' | 'no_cutover_yet'
     summary: {
-      totalCycles: totalCycles,
-      patuhCount: patuhCount,
-      lewatCount: lewatCount,
-      patuhRate: totalCycles > 0 ? Math.round((patuhCount / totalCycles) * 100) : -1,
-      avgDurasiPengisian: totalCycles > 0 ? (totalDurasiPengisian / totalCycles).toFixed(2) : -1,
-      avgDurasiTunggu: cyclesWithTunggu > 0 ? (totalDurasiTunggu / cyclesWithTunggu).toFixed(2) : -1,
       totalEvents: totalEvents,
-      anomaliCount: anomaliCount,
-      anomaliRate: totalEvents > 0 ? Math.round((anomaliCount / totalEvents) * 100) : -1
+      eventCountByType: eventCountByType
     },
-    dailyTrend: dailyTrend,
-    wadComparison: wadComparison,
-    lateList: lateList.sort(function (a, b) { return b.durasi - a.durasi; }),
-    anomaliList: anomaliList,
+    wadComparisonEventCounts: wadComparisonEventCounts,
+    legacy: legacy, // {totalCycles, patuhCount, lewatCount, avgDurasiPengisian, avgDurasiTunggu, dailyTrend, lateList, wadComparison, anomaliList} or null
+    canonical: canonical ? {
+      totalCycles: canonical.totalCycles, patuhCount: canonical.patuhCount, lewatCount: canonical.lewatCount,
+      avgDurasiPengisian: canonical.avgDurasiPengisian, avgDurasiTunggu: canonical.avgDurasiTunggu,
+      dailyTrend: canonical.dailyTrend, lateList: canonical.lateList, wadComparison: canonical.wadComparison,
+      anomaliList: canonicalAnomaliList, allCycles: canonical.allCycles
+    } : null,
     rawLog: logRows.filter(function (r) {
       var rts = new Date(r[COL.TIMESTAMP]);
       return rts >= rangeStart && rts <= rangeEnd;
@@ -240,6 +146,112 @@ function getDashboardData(startDate, endDate) {
         status: r[COL.STATUS_VALIDASI]
       };
     }).reverse()
+  };
+}
+
+// Legacy (pre-cutover) cycle metrics -- reads SLA_Summary exactly as the
+// original implementation did. Kept as the ONLY reader of SLA_Summary
+// going forward (frozen as read-only legacy reference, never written to
+// again -- see Phase 9 report §"Historical data").
+function computeLegacyCycleMetrics_(ss, tz, rangeStart, rangeEnd) {
+  var slaSheet = ss.getSheetByName(SHEET_SLA_NAME);
+  var slaLastRow = slaSheet.getLastRow();
+  var slaRows = slaLastRow >= 2 ? slaSheet.getRange(2, 1, slaLastRow - 1, 8).getValues() : [];
+
+  var totalCycles = 0, patuhCount = 0, lewatCount = 0;
+  var totalDurasiPengisian = 0, totalDurasiTunggu = 0, cyclesWithTunggu = 0;
+  var wadStats = {};
+  WAD_LIST.forEach(function (w) { wadStats[w] = { cycles: 0, patuh: 0, lewat: 0, totalDurasi: 0, totalTunggu: 0, tungguCount: 0 }; });
+  var dailyMap = {};
+  var lateList = [];
+  var anomaliList = [];
+  var allCycles = []; // per-cycle rows for Analisis Masa -- replaces client-side re-pairing
+
+  for (var j = 0; j < slaRows.length; j++) {
+    var srow = slaRows[j];
+    var sWad = srow[0];
+    var sMasaHantar = srow[2] ? new Date(srow[2]) : null;
+    var sMasaSelesai = srow[3] ? new Date(srow[3]) : null;
+    var sDurasi = parseFloat(srow[4]) || 0;
+    var sStatusSla = srow[5];
+    var sMasaAmbil = srow[6] ? new Date(srow[6]) : null;
+    var sDurasiTunggu = srow[7] !== '' ? parseFloat(srow[7]) : null;
+
+    if (!sMasaHantar || sMasaHantar < rangeStart || sMasaHantar >= rangeEnd) continue;
+
+    totalCycles++;
+    var isPatuh = sStatusSla && sStatusSla.toString().indexOf('PATUH') === 0;
+    if (isPatuh) patuhCount++; else lewatCount++;
+    totalDurasiPengisian += sDurasi;
+    if (sDurasiTunggu !== null) { totalDurasiTunggu += sDurasiTunggu; cyclesWithTunggu++; }
+
+    if (wadStats.hasOwnProperty(sWad)) {
+      wadStats[sWad].cycles++;
+      if (isPatuh) wadStats[sWad].patuh++; else wadStats[sWad].lewat++;
+      wadStats[sWad].totalDurasi += sDurasi;
+      if (sDurasiTunggu !== null) { wadStats[sWad].totalTunggu += sDurasiTunggu; wadStats[sWad].tungguCount++; }
+    }
+
+    var dayKey = Utilities.formatDate(sMasaHantar, tz, 'dd/MM');
+    if (!dailyMap[dayKey]) dailyMap[dayKey] = { cycles: 0, patuh: 0, lewat: 0, sortKey: sMasaHantar.getTime() };
+    dailyMap[dayKey].cycles++;
+    if (isPatuh) dailyMap[dayKey].patuh++; else dailyMap[dayKey].lewat++;
+
+    if (!isPatuh) {
+      lateList.push({
+        wad: sWad, tarikh: Utilities.formatDate(sMasaHantar, tz, 'dd/MM/yyyy'),
+        masaHantar: Utilities.formatDate(sMasaHantar, tz, 'HH:mm'),
+        masaSelesai: sMasaSelesai ? Utilities.formatDate(sMasaSelesai, tz, 'HH:mm') : '-',
+        durasi: sDurasi
+      });
+    }
+
+    allCycles.push({
+      wad: sWad, tarikh: Utilities.formatDate(sMasaHantar, tz, 'dd/MM/yyyy'), sortKey: sMasaHantar.getTime(),
+      dayOfWeek: sMasaHantar.getDay(), monthStr: Utilities.formatDate(sMasaHantar, tz, 'MM/yyyy'),
+      masaHantar: Utilities.formatDate(sMasaHantar, tz, 'HH:mm'),
+      masaSelesai: sMasaSelesai ? Utilities.formatDate(sMasaSelesai, tz, 'HH:mm') : '-',
+      masaAmbil: sMasaAmbil ? Utilities.formatDate(sMasaAmbil, tz, 'HH:mm') : null,
+      masaPengiMinit: Math.round(sDurasi * 60),
+      masaTungguMinit: sDurasiTunggu !== null ? Math.round(sDurasiTunggu * 60) : null,
+      patuh: isPatuh
+    });
+  }
+
+  var dailyTrend = Object.keys(dailyMap).map(function (k) {
+    return { label: k, cycles: dailyMap[k].cycles, patuh: dailyMap[k].patuh, lewat: dailyMap[k].lewat, sortKey: dailyMap[k].sortKey };
+  }).sort(function (a, b) { return a.sortKey - b.sortKey; });
+
+  // Legacy anomaly list -- the old "ANOMALI:" text-matched rows from
+  // Log_Troli, scoped to this sub-range only, kept structurally distinct
+  // from the canonical Rejection_Audit-sourced list.
+  var logSheet = ss.getSheetByName(SHEET_LOG_NAME);
+  var logLastRow = logSheet.getLastRow();
+  if (logLastRow >= 2) {
+    var logRows = logSheet.getRange(2, 1, logLastRow - 1, 7).getValues();
+    logRows.forEach(function (arow) {
+      var ats = new Date(arow[COL.TIMESTAMP]);
+      if (ats < rangeStart || ats >= rangeEnd) return;
+      var astatus = arow[COL.STATUS_VALIDASI];
+      if (astatus && astatus.toString().indexOf('ANOMALI') === 0) {
+        anomaliList.push({
+          tarikh: Utilities.formatDate(ats, tz, 'dd/MM/yyyy'), masa: Utilities.formatDate(ats, tz, 'HH:mm'),
+          wad: arow[COL.WAD], event: arow[COL.EVENT], nama: arow[COL.NAMA], sebab: astatus
+        });
+      }
+    });
+    anomaliList.sort(function (a, b) { return b.tarikh.localeCompare(a.tarikh) || b.masa.localeCompare(a.masa); });
+  }
+
+  return {
+    totalCycles: totalCycles, patuhCount: patuhCount, lewatCount: lewatCount,
+    avgDurasiPengisian: totalCycles > 0 ? (totalDurasiPengisian / totalCycles).toFixed(2) : -1,
+    avgDurasiTunggu: cyclesWithTunggu > 0 ? (totalDurasiTunggu / cyclesWithTunggu).toFixed(2) : -1,
+    dailyTrend: dailyTrend,
+    lateList: lateList.sort(function (a, b) { return b.durasi - a.durasi; }),
+    wadComparison: wadStats,
+    anomaliList: anomaliList,
+    allCycles: allCycles
   };
 }
 

@@ -127,17 +127,36 @@ var AU_HEADERS = ['Email', 'Active', 'Notes'];
 
 // ====== CUTOVER CONFIGURATION ======
 // The canonical pipeline's go-live timestamp. NOT hardcoded to a guessed
-// historical date -- this is a Script Property that MUST be set manually,
-// once, at the moment of actual production cutover (see Phase 9 report,
-// "Manual deployment/setup steps still required"). Reading it before it is
-// set returns null, and callers must treat that as "cutover has not
-// happened yet" (i.e. currently in the shadow/pre-implementation period),
-// never guess a date.
-var CUTOVER_PROPERTY_KEY = 'CANONICAL_CUTOVER_TIMESTAMP';
+// historical date -- must be set manually, once, at the moment of actual
+// production cutover (see Phase 9 report, "Manual deployment/setup steps
+// still required"). Reading it before it is set returns null, and callers
+// must treat that as "cutover has not happened yet," never guess a date.
+//
+// IMPORTANT: stored as a row in the shared System_Config sheet in the
+// shared database spreadsheet, NOT in PropertiesService. Apps Script's
+// PropertiesService.getScriptProperties() is scoped per-project, and
+// sistem-notifikasi/dashboard-analitik are two separate standalone
+// projects -- a value set in one project's Script Properties is invisible
+// to the other. Both projects need to agree on the same cutover moment
+// (dashboard for mixed-range reporting, this project for any future
+// cutover-aware behavior), so it must live in the one place both projects
+// already share: the spreadsheet itself.
+var SHEET_SYSTEM_CONFIG = 'System_Config';
+var CONFIG_KEY_CUTOVER = 'CANONICAL_CUTOVER_TIMESTAMP';
 
 function getCutoverTimestamp_() {
-  var v = PropertiesService.getScriptProperties().getProperty(CUTOVER_PROPERTY_KEY);
-  return v ? new Date(v) : null;
+  var id = PropertiesService.getScriptProperties().getProperty('DB_ID');
+  if (!id) return null;
+  var ss = SpreadsheetApp.openById(id);
+  var sheet = ss.getSheetByName(SHEET_SYSTEM_CONFIG);
+  if (!sheet) return null;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  var data = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][0] === CONFIG_KEY_CUTOVER && data[i][1]) return new Date(data[i][1]);
+  }
+  return null;
 }
 
 /**
@@ -189,6 +208,14 @@ function setupCanonicalArchitecture_() {
     created.push(SHEET_ADMIN_USERS + ' (placeholder row -- MUST be edited manually)');
   }
 
+  if (!ss.getSheetByName(SHEET_SYSTEM_CONFIG)) {
+    var cfg = ss.insertSheet(SHEET_SYSTEM_CONFIG);
+    cfg.appendRow(['Key', 'Value']);
+    cfg.getRange(1, 1, 1, 2).setFontWeight('bold');
+    cfg.appendRow([CONFIG_KEY_CUTOVER, '']); // PLACEHOLDER -- set manually at actual cutover, see Phase 9 report
+    created.push(SHEET_SYSTEM_CONFIG + ' (CANONICAL_CUTOVER_TIMESTAMP left blank -- MUST be set manually at cutover)');
+  }
+
   if (!ss.getSheetByName(SHEET_CYCLE_SUMMARY_LEGACY)) {
     var legacy = ss.insertSheet(SHEET_CYCLE_SUMMARY_LEGACY);
     legacy.appendRow(['Reconstructed retrospectively under current rules — not the historically-reported figures.']);
@@ -209,7 +236,7 @@ function setupCanonicalArchitecture_() {
 
   Logger.log('setupCanonicalArchitecture_ selesai. Dicipta/dikemaskini: ' + JSON.stringify(created));
   Logger.log('PENTING: (1) edit Admin_Users dengan email pentadbir sebenar; ' +
-    '(2) tetapkan Script Property "' + CUTOVER_PROPERTY_KEY + '" (ISO date) apabila cutover berlaku sebenar.');
+    '(2) isi nilai "' + CONFIG_KEY_CUTOVER + '" dalam sheet "' + SHEET_SYSTEM_CONFIG + '" (format tarikh/masa ISO) apabila cutover berlaku sebenar.');
   return created;
 }
 

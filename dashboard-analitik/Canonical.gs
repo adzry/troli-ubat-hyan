@@ -201,6 +201,167 @@ function closeCycleAdmin(cycleIds) {
   }
 }
 
+// =====================================================================
+// PHASE 9H -- CUTOVER-AWARE READ HELPERS
+// Mirrors sistem-notifikasi/Canonical.gs's getCutoverTimestamp_ exactly
+// (same System_Config sheet in the shared spreadsheet -- see that file's
+// comment on why this cannot live in PropertiesService).
+// =====================================================================
+
+var SHEET_SYSTEM_CONFIG_ = 'System_Config';
+var CONFIG_KEY_CUTOVER_ = 'CANONICAL_CUTOVER_TIMESTAMP';
+
+function getCutoverTimestamp2_(ss) {
+  var sheet = ss.getSheetByName(SHEET_SYSTEM_CONFIG_);
+  if (!sheet) return null;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  var data = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][0] === CONFIG_KEY_CUTOVER_ && data[i][1]) return new Date(data[i][1]);
+  }
+  return null;
+}
+
+/**
+ * Splits [rangeStart, rangeEnd] against the cutover moment into a legacy
+ * sub-range and a canonical sub-range, either of which may be null if the
+ * whole requested range falls entirely on one side. Cycle-derived metrics
+ * for the two sub-ranges are NEVER combined into one blended figure
+ * (Phase 8 correction §6) -- only this split is computed here; callers
+ * compute each side from its own authoritative source.
+ */
+function splitRangeAtCutover_(rangeStart, rangeEnd, cutover) {
+  if (!cutover) return { legacy: { start: rangeStart, end: rangeEnd }, canonical: null, mode: 'no_cutover_yet' };
+  if (cutover <= rangeStart) return { legacy: null, canonical: { start: rangeStart, end: rangeEnd }, mode: 'canonical' };
+  if (cutover >= rangeEnd) return { legacy: { start: rangeStart, end: rangeEnd }, canonical: null, mode: 'legacy' };
+  return {
+    legacy: { start: rangeStart, end: cutover },
+    canonical: { start: cutover, end: rangeEnd },
+    mode: 'mixed'
+  };
+}
+
+/**
+ * Canonical (post-cutover) cycle metrics, sourced ENTIRELY from
+ * Cycle_Summary -- never SLA_Summary. Shape mirrors the legacy
+ * getDashboardData()'s cycle-metric fields so the same render functions on
+ * the dashboard can consume either one, clearly labeled by the caller.
+ */
+function getCanonicalCycleMetrics_(ss, tz, start, end) {
+  var sheet = ss.getSheetByName(SHEET_CYCLE_SUMMARY_);
+  var lastRow = sheet.getLastRow();
+  var result = {
+    totalCycles: 0, patuhCount: 0, lewatCount: 0,
+    avgDurasiPengisian: -1, avgDurasiTunggu: -1,
+    dailyTrend: [], lateList: [], wadComparison: {}, allCycles: []
+  };
+  if (lastRow < 2) return result;
+
+  var data = sheet.getRange(2, 1, lastRow - 1, CS_HEADERS_LEN_).getValues();
+  var totalDurasi = 0, totalTunggu = 0, tungguCount = 0;
+  var dailyMap = {};
+  var wadStats = {};
+
+  data.forEach(function (row) {
+    var opDayStr = row[CS_COL_.OPERATIONAL_DAY - 1];
+    var opDay = new Date(opDayStr + 'T00:00:00');
+    if (opDay < start || opDay >= end) return;
+    if (!isTerminalState2_(row[CS_COL_.CURRENT_STATE - 1])) return; // only completed cycles count toward SLA stats, matching legacy semantics
+
+    var ward = row[CS_COL_.WARD - 1];
+    var tatMs = row[CS_COL_.TAT_MS - 1];
+    var slaStatus = row[CS_COL_.SLA_STATUS - 1];
+    var waitMs = row[CS_COL_.WAIT_MS - 1];
+
+    result.totalCycles++;
+    var isPatuh = slaStatus === 'PATUH';
+    if (slaStatus) { if (isPatuh) result.patuhCount++; else if (slaStatus === 'LEWAT') result.lewatCount++; }
+    if (typeof tatMs === 'number') totalDurasi += tatMs / 3600000;
+    if (typeof waitMs === 'number') { totalTunggu += waitMs / 3600000; tungguCount++; }
+
+    if (!wadStats[ward]) wadStats[ward] = { cycles: 0, patuh: 0, lewat: 0, totalDurasi: 0, totalTunggu: 0, tungguCount: 0 };
+    wadStats[ward].cycles++;
+    if (slaStatus === 'PATUH') wadStats[ward].patuh++; else if (slaStatus === 'LEWAT') wadStats[ward].lewat++;
+    if (typeof tatMs === 'number') wadStats[ward].totalDurasi += tatMs / 3600000;
+    if (typeof waitMs === 'number') { wadStats[ward].totalTunggu += waitMs / 3600000; wadStats[ward].tungguCount++; }
+
+    var dayKey = Utilities.formatDate(opDay, tz, 'dd/MM');
+    if (!dailyMap[dayKey]) dailyMap[dayKey] = { cycles: 0, patuh: 0, lewat: 0, sortKey: opDay.getTime() };
+    dailyMap[dayKey].cycles++;
+    if (slaStatus === 'PATUH') dailyMap[dayKey].patuh++; else if (slaStatus === 'LEWAT') dailyMap[dayKey].lewat++;
+
+    if (slaStatus === 'LEWAT') {
+      result.lateList.push({
+        wad: ward, tarikh: Utilities.formatDate(opDay, tz, 'dd/MM/yyyy'),
+        masaHantar: row[CS_COL_.HANTAR_TS - 1] ? Utilities.formatDate(new Date(row[CS_COL_.HANTAR_TS - 1]), tz, 'HH:mm') : '-',
+        masaSelesai: row[CS_COL_.SELESAI_TS - 1] ? Utilities.formatDate(new Date(row[CS_COL_.SELESAI_TS - 1]), tz, 'HH:mm') : '-',
+        durasi: typeof tatMs === 'number' ? (tatMs / 3600000).toFixed(2) : ''
+      });
+    }
+
+    result.allCycles.push({
+      wad: ward, tarikh: Utilities.formatDate(opDay, tz, 'dd/MM/yyyy'), sortKey: opDay.getTime(),
+      dayOfWeek: opDay.getDay(), monthStr: Utilities.formatDate(opDay, tz, 'MM/yyyy'),
+      masaHantar: row[CS_COL_.HANTAR_TS - 1] ? Utilities.formatDate(new Date(row[CS_COL_.HANTAR_TS - 1]), tz, 'HH:mm') : '-',
+      masaSelesai: row[CS_COL_.SELESAI_TS - 1] ? Utilities.formatDate(new Date(row[CS_COL_.SELESAI_TS - 1]), tz, 'HH:mm') : '-',
+      masaAmbil: row[CS_COL_.AMBIL_TS - 1] ? Utilities.formatDate(new Date(row[CS_COL_.AMBIL_TS - 1]), tz, 'HH:mm') : null,
+      masaPengiMinit: typeof tatMs === 'number' ? Math.round(tatMs / 60000) : null,
+      masaTungguMinit: typeof waitMs === 'number' ? Math.round(waitMs / 60000) : null,
+      patuh: slaStatus === 'PATUH'
+    });
+  });
+
+  result.avgDurasiPengisian = result.totalCycles > 0 ? (totalDurasi / result.totalCycles).toFixed(2) : -1;
+  result.avgDurasiTunggu = tungguCount > 0 ? (totalTunggu / tungguCount).toFixed(2) : -1;
+  result.dailyTrend = Object.keys(dailyMap).map(function (k) {
+    return { label: k, cycles: dailyMap[k].cycles, patuh: dailyMap[k].patuh, lewat: dailyMap[k].lewat, sortKey: dailyMap[k].sortKey };
+  }).sort(function (a, b) { return a.sortKey - b.sortKey; });
+  result.lateList.sort(function (a, b) { return parseFloat(b.durasi) - parseFloat(a.durasi); });
+  result.wadComparison = wadStats;
+  return result;
+}
+
+/**
+ * Canonical (post-cutover) rejection/exception list, sourced from
+ * Rejection_Audit -- structurally distinct from the legacy "ANOMALI:"
+ * text-matched list, never merged with it.
+ */
+function getCanonicalAnomaliList_(ss, tz, start, end) {
+  var sheet = ss.getSheetByName(SHEET_REJECTION_AUDIT_);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var data = sheet.getRange(2, 1, lastRow - 1, RA_HEADERS_LEN_).getValues();
+  var list = [];
+  data.forEach(function (row) {
+    var ts = row[RA_COL_.TIMESTAMP - 1];
+    if (!ts || ts < start || ts >= end) return;
+    var recordType = row[RA_COL_.RECORD_TYPE - 1];
+    var reasonCode = row[RA_COL_.REASON_CODE - 1];
+    // Admin/Auto closure and reconciliation housekeeping are audit
+    // records, not anomalies for this list -- they are surfaced elsewhere
+    // (Admin/Auto Closure history), keeping this list focused on rejected
+    // submissions and flagged exceptions, matching the legacy list's intent.
+    if (reasonCode === 'ADMIN_CLOSURE' || reasonCode === 'AUTO_CLOSURE' ||
+      reasonCode === 'RECONCILIATION_REPAIR' || reasonCode === 'RECONCILIATION_ANOMALY') return;
+    list.push({
+      tarikh: Utilities.formatDate(ts, tz, 'dd/MM/yyyy'),
+      masa: Utilities.formatDate(ts, tz, 'HH:mm'),
+      wad: row[RA_COL_.WARD - 1],
+      event: row[RA_COL_.EVENT_TYPE - 1],
+      nama: '', // Rejection_Audit does not carry a Nama field (rejected
+      // submissions were never accepted into Log_Troli, so there is no
+      // respondent-name column to draw from here) -- the dashboard falls
+      // back to a placeholder for this column on canonical-sourced rows.
+      recordType: recordType,
+      reasonCode: reasonCode,
+      sebab: row[RA_COL_.REASON_TEXT - 1]
+    });
+  });
+  list.sort(function (a, b) { return b.tarikh.localeCompare(a.tarikh) || b.masa.localeCompare(a.masa); });
+  return list;
+}
+
 /**
  * Replaces the old age-based getStuckCycles(). Returns every currently
  * non-terminal Cycle_Summary row, with no age threshold -- Admin Closure

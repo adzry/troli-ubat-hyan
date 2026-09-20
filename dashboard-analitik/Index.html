@@ -356,6 +356,8 @@
 
         <div id="content" style="display:none">
 
+          <div id="cutoverBanner" style="display:none; margin-bottom:14px; padding:10px 14px; border-radius:8px; background:var(--bg-2,#f5f5f7); border:1px solid var(--line,#e0e0e0); font-size:12.5px; color:var(--ink-2,#555); font-weight:600;"></div>
+
           <div class="view active" id="view-overview">
             <div class="kpi-grid" id="kpiGrid"></div>
             <div class="panel">
@@ -541,6 +543,7 @@
 
     var currentData = null;
     var rawLogAll = [];
+    var lastWadArray = []; // built by renderAll(), read by unitDotColor()
 
     function pad(n) { return n < 10 ? '0' + n : n; }
     function toDateInputStr(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
@@ -579,7 +582,7 @@
         }
         currentData = res;
         rawLogAll = res.rawLog || [];
-        populateUnitFilter(res.wadComparison);
+        populateUnitFilter(res.wadComparisonEventCounts);
         renderAll(res);
         document.getElementById('loaderBox').style.display = 'none';
         document.getElementById('content').style.display = 'block';
@@ -627,31 +630,116 @@
       }
     });
 
-    function renderAll(data) {
-      renderKpis(data.summary);
-      renderTrendChart(data.dailyTrend);
-      renderDonutChart();
-      renderWadMiniTable(data.wadComparison);
-      renderWadBarChart(data.wadComparison);
-      renderUnitGrid(data.wadComparison);
-      renderLateTable(data.lateList);
-      renderAnomaliTable(data.anomaliList);
-      renderRekodTable(data.rawLog);
-      document.getElementById('rekodCount').innerText = (data.rawLog || []).length + ' rekod dalam tempoh dipilih';
-      populateMasaFilters(data.wadComparison);
-      populateNotifLinks(data.wadComparison);
-      renderAnomaliBreakdownView(data.rawLog);
-      renderMasaViews();
+    // Cutover-aware rendering (Phase 9H). Cycle-derived metrics (KPIs,
+    // trend, late list, anomali, Analisis Masa) are NEVER blended across
+    // the canonical cutover boundary -- data.legacy and data.canonical are
+    // rendered as clearly separate, clearly labeled outputs. Raw event
+    // totals (data.summary, data.rawLog) are cutover-insensitive and stay
+    // continuous.
+    function toKpiShape_(cycleMetrics, summary) {
+      var totalCycles = cycleMetrics ? cycleMetrics.totalCycles : 0;
+      var patuhCount = cycleMetrics ? cycleMetrics.patuhCount : 0;
+      var lewatCount = cycleMetrics ? cycleMetrics.lewatCount : 0;
+      var anomaliCount = (cycleMetrics && cycleMetrics.anomaliList) ? cycleMetrics.anomaliList.length : 0;
+      return {
+        totalCycles: totalCycles,
+        patuhRate: totalCycles > 0 ? Math.round((patuhCount / totalCycles) * 100) : -1,
+        lewatCount: lewatCount,
+        anomaliRate: summary.totalEvents > 0 ? Math.round((anomaliCount / summary.totalEvents) * 100) : -1
+      };
     }
 
-    function renderKpis(s) {
+    // Merges the continuous per-ward event counts with ONE regime's cycle
+    // stats (never both at once -- see renderAll's choice of `primary`).
+    function buildWadComparisonArray_(eventCounts, cycleStatsObj) {
+      return (eventCounts || []).map(function (e) {
+        var s = cycleStatsObj && cycleStatsObj[e.wad];
+        var cycles = s ? s.cycles : 0, patuh = s ? s.patuh : 0, lewat = s ? s.lewat : 0;
+        return {
+          wad: e.wad, isTrolleyWard: e.isTrolleyWard, eventCount: e.eventCount,
+          cycles: cycles, patuh: patuh, lewat: lewat,
+          patuhRate: cycles > 0 ? Math.round((patuh / cycles) * 100) : -1,
+          avgDurasi: (s && cycles > 0) ? (s.totalDurasi / cycles).toFixed(2) : -1,
+          avgTunggu: (s && s.tungguCount > 0) ? (s.totalTunggu / s.tungguCount).toFixed(2) : -1
+        };
+      });
+    }
+
+    function renderCutoverBanner_(mode) {
+      var el = document.getElementById('cutoverBanner');
+      if (!el) return;
+      var text = {
+        legacy: 'Data Legacy (pra-cutover) — metrik cycle dikira daripada SLA_Summary.',
+        canonical: 'Data Kanonik (pasca-cutover) — metrik cycle dikira daripada Cycle_Summary.',
+        mixed: 'Julat merentasi cutover — metrik cycle Legacy dan Kanonik dipaparkan BERASINGAN di bawah, tidak digabungkan.',
+        no_cutover_yet: 'Cutover kanonik belum ditetapkan — semua data dipaparkan sebagai Legacy.'
+      }[mode] || '';
+      el.textContent = text;
+      el.style.display = text ? 'block' : 'none';
+    }
+
+    // Only the Overview tab gets a mirrored "Selepas Cutover" panel for a
+    // mixed range (KPIs + trend). This is a deliberate scope boundary, not
+    // every single chart/tab is duplicated -- documented as a known
+    // limitation in the Phase 9 report. The important invariant (never
+    // silently blend Legacy and Kanonik cycle numbers) holds regardless.
+    function renderCanonicalMixedSection_(data) {
+      var existing = document.getElementById('canonicalMixedPanel');
+      if (existing) existing.remove();
+      if (data.rangeMode !== 'mixed' || !data.canonical) return;
+
+      var panel = document.createElement('div');
+      panel.className = 'panel';
+      panel.id = 'canonicalMixedPanel';
+      panel.innerHTML =
+        '<div class="panel-head"><div><div class="panel-title">Selepas Cutover (Kanonik)</div>' +
+        '<div class="panel-sub">Bahagian julat ini selepas cutover kanonik -- dikira daripada Cycle_Summary sahaja, TIDAK digabung dengan angka Legacy di atas.</div></div></div>' +
+        '<div class="kpi-grid" id="canonicalKpiGrid" style="margin-bottom:14px;"></div>' +
+        '<div id="canonicalTrendChart"></div>';
+      document.getElementById('view-overview').appendChild(panel);
+
+      renderKpis(toKpiShape_(data.canonical, data.summary), 'canonicalKpiGrid');
+      renderTrendChart(data.canonical.dailyTrend, 'canonicalTrendChart');
+    }
+
+    function renderAll(data) {
+      renderCutoverBanner_(data.rangeMode);
+
+      // In mixed mode, Legacy occupies the main/primary slot (Overview KPIs,
+      // trend, wad tables, SLA tab, Analisis Masa's first section); the
+      // canonical portion gets its own clearly separate rendering
+      // (renderCanonicalMixedSection_, and a second Analisis Masa section
+      // below) -- never merged into these primary numbers.
+      var primary = data.legacy || data.canonical;
+      var primaryAnomali = (primary && primary.anomaliList) || [];
+      lastWadArray = buildWadComparisonArray_(data.wadComparisonEventCounts, primary ? primary.wadComparison : null);
+
+      renderKpis(toKpiShape_(primary, data.summary));
+      renderTrendChart(primary ? primary.dailyTrend : []);
+      renderDonutChart();
+      renderWadMiniTable(lastWadArray);
+      renderWadBarChart(lastWadArray);
+      renderUnitGrid(lastWadArray);
+      renderLateTable(primary ? primary.lateList : []);
+      renderAnomaliTable(primaryAnomali);
+      renderRekodTable(data.rawLog);
+      document.getElementById('rekodCount').innerText = (data.rawLog || []).length + ' rekod dalam tempoh dipilih';
+      populateMasaFilters(lastWadArray);
+      populateNotifLinks(lastWadArray);
+      renderAnomaliBreakdownView(data.rawLog);
+      renderMasaViews();
+
+      renderCanonicalMixedSection_(data);
+    }
+
+    function renderKpis(s, targetId) {
       var cards = [
         { label: 'Jumlah Cycle', value: s.totalCycles, unit: '' },
         { label: 'Patuh Piagam', value: s.patuhRate !== -1 ? s.patuhRate : '&ndash;', unit: s.patuhRate !== -1 ? '%' : '', accent: s.patuhRate === -1 ? '' : (s.patuhRate >= 90 ? 'accent-success' : s.patuhRate >= 70 ? 'accent-warning' : 'accent-danger') },
         { label: 'Cycle Lewat', value: s.lewatCount, unit: '', accent: s.lewatCount > 0 ? 'accent-danger' : '' },
         { label: 'Kadar Anomali', value: s.anomaliRate !== -1 ? s.anomaliRate : '&ndash;', unit: s.anomaliRate !== -1 ? '%' : '', accent: (s.anomaliRate !== -1 && s.anomaliRate > 15) ? 'accent-warning' : '' }
       ];
-      document.getElementById('kpiGrid').innerHTML = cards.map(function (c) {
+      document.getElementById(targetId || 'kpiGrid').innerHTML = cards.map(function (c) {
         return '<div class="kpi-card ' + (c.accent || '') + '">' +
           '<div class="kpi-label">' + c.label + '</div>' +
           '<div class="kpi-value">' + c.value + '<span class="unit">' + c.unit + '</span></div>' +
@@ -659,8 +747,8 @@
       }).join('');
     }
 
-    function renderTrendChart(trend) {
-      var box = document.getElementById('trendChart');
+    function renderTrendChart(trend, targetId) {
+      var box = document.getElementById(targetId || 'trendChart');
       if (!trend || trend.length === 0) { box.innerHTML = '<div class="empty">Tiada data cycle dalam tempoh ini</div>'; return; }
 
       var w = 1000, h = 230, padL = 36, padB = 26, padT = 14, padR = 14;
@@ -744,7 +832,7 @@
     }
 
     function unitDotColor(name) {
-      var allUnits = currentData ? currentData.wadComparison.map(function (w) { return w.wad; }) : [];
+      var allUnits = lastWadArray.map(function (w) { return w.wad; });
       var idx = allUnits.indexOf(name);
       return UNIT_COLORS[idx % UNIT_COLORS.length] || '#999';
     }
@@ -801,7 +889,7 @@
     function renderAnomaliTable(anomaliList) {
       if (!anomaliList || anomaliList.length === 0) { document.getElementById('anomaliTable').innerHTML = '<div class="empty">Tiada anomali dalam tempoh ini</div>'; return; }
       var rows = anomaliList.map(function (a) {
-        return '<tr class="row-hover"><td class="mono">' + a.tarikh + ' ' + a.masa + '</td><td>' + a.wad + '</td><td>' + a.event + '</td><td>' + a.nama + '</td><td style="color:var(--ink-2); font-size:11.5px; white-space:normal;">' + a.sebab + '</td></tr>';
+        return '<tr class="row-hover"><td class="mono">' + a.tarikh + ' ' + a.masa + '</td><td>' + a.wad + '</td><td>' + a.event + '</td><td>' + (a.nama || '&ndash;') + '</td><td style="color:var(--ink-2); font-size:11.5px; white-space:normal;">' + a.sebab + '</td></tr>';
       }).join('');
       document.getElementById('anomaliTable').innerHTML = '<table><tr><th class="mono">Masa</th><th>Wad</th><th>Tindakan</th><th>Nama</th><th>Sebab</th></tr>' + rows + '</table>';
     }
@@ -829,8 +917,14 @@
       }).withFailureHandler(function (err) { console.error(err); }).exportLogCsv(start, end);
     }
 
-    // ===== STUCK CYCLE - ADMIN CHECK & CLOSE =====
-    var stuckCycleData = [];
+    // ===== ADMIN CLOSURE (Phase 9H) =====
+    // Replaces the old age-based "stuck cycle" check. Any non-terminal
+    // Cycle_Summary row can be Admin-Closed, at any age (frozen rule: Admin
+    // Closure may bypass any non-terminal state). Authentication/
+    // authorization (Session.getActiveUser() + Admin_Users allow-list) is
+    // enforced entirely server-side in closeCycleAdmin() -- this UI cannot
+    // bypass it, and a manually typed name is never accepted anywhere.
+    var openCycleData = [];
 
     function checkStuckCycles() {
       var box = document.getElementById('stuckCycleResult');
@@ -839,43 +933,50 @@
 
       google.script.run.withSuccessHandler(function (res) {
         if (res.error) { box.innerHTML = '<div class="empty">Ralat: ' + res.error + '</div>'; return; }
-        if (!res.stuck || res.stuck.length === 0) {
-          box.innerHTML = '<div class="settings-row" style="margin-top:8px;"><div class="settings-row-title" style="color:var(--success)">&#10003; Tiada stuck cycle dijumpai</div></div>';
+        if (!res.open || res.open.length === 0) {
+          box.innerHTML = '<div class="settings-row" style="margin-top:8px;"><div class="settings-row-title" style="color:var(--success)">&#10003; Tiada cycle terbuka dijumpai</div></div>';
           return;
         }
-        stuckCycleData = res.stuck;
-        var rows = res.stuck.map(function (c, i) {
+        openCycleData = res.open;
+        var rows = res.open.map(function (c, i) {
           return '<tr><td><input type="checkbox" class="stuck-check" data-idx="' + i + '" checked></td>' +
-            '<td>' + c.wad + '</td><td class="mono">' + c.lastEventLabel + '</td>' +
-            '<td class="mono">' + c.ageHrs + ' jam</td></tr>';
+            '<td>' + c.ward + '</td><td class="mono">' + c.operationalDay + '</td><td class="mono">' + c.currentState + '</td></tr>';
         }).join('');
         box.innerHTML =
-          '<div class="table-wrap" style="margin-top:8px;"><table><tr><th></th><th>Wad</th><th>Status Terakhir</th><th class="mono">Lama Stuck</th></tr>' + rows + '</table></div>' +
-          '<button class="btn-export" style="margin-top:10px; background:var(--danger); color:#fff; border-color:var(--danger);" onclick="closeSelectedStuckCycles()">Tutup Cycle Dipilih</button>';
+          '<div class="table-wrap" style="margin-top:8px;"><table><tr><th></th><th>Wad</th><th class="mono">Hari Operasi</th><th class="mono">Status</th></tr>' + rows + '</table></div>' +
+          '<button class="btn-export" style="margin-top:10px; background:var(--danger); color:#fff; border-color:var(--danger);" onclick="closeSelectedStuckCycles()">Tutup Cycle Dipilih (Admin Closure)</button>';
       }).withFailureHandler(function (err) {
         box.innerHTML = '<div class="empty">Gagal menyemak. Sila cuba lagi.</div>';
         console.error(err);
-      }).getStuckCycles();
+      }).getOpenCycles();
     }
 
     function closeSelectedStuckCycles() {
       var checked = Array.prototype.slice.call(document.querySelectorAll('.stuck-check:checked'));
-      if (checked.length === 0) { alert('Sila pilih sekurang-kurangnya satu wad.'); return; }
+      if (checked.length === 0) { alert('Sila pilih sekurang-kurangnya satu cycle.'); return; }
 
-      var selected = checked.map(function (cb) { return stuckCycleData[parseInt(cb.dataset.idx)]; });
-      var wadNames = selected.map(function (c) { return c.wad; }).join(', ');
+      var selected = checked.map(function (cb) { return openCycleData[parseInt(cb.dataset.idx)]; });
+      var cycleIds = selected.map(function (c) { return c.cycleId; });
+      var labels = selected.map(function (c) { return c.ward + ' (' + c.operationalDay + ')'; }).join(', ');
 
-      var confirmMsg = 'Sahkan troli untuk wad berikut SUDAH diambil secara fizikal:\n\n' + wadNames +
-        '\n\nMasa ambil sebenar TIDAK akan direkod (hanya ditanda ditutup admin). Teruskan?';
+      var confirmMsg = 'Sahkan Admin Closure untuk cycle berikut:\n\n' + labels +
+        '\n\nIni memerlukan akaun Google anda yang log masuk untuk disahkan sebagai pentadbir dibenarkan. Masa ambil sebenar TIDAK akan direkod. Teruskan?';
       if (!confirm(confirmMsg)) return;
 
       google.script.run.withSuccessHandler(function (res) {
+        if (res.error) {
+          document.getElementById('stuckCycleResult').innerHTML =
+            '<div class="settings-row" style="margin-top:8px;"><div class="settings-row-title" style="color:var(--danger)">&#10007; ' + res.error + '</div></div>';
+          return;
+        }
+        var msg = res.closed.length + ' cycle ditutup (' + res.actorIdentity + ')';
+        if (res.skipped && res.skipped.length > 0) msg += '. Dilangkau: ' + res.skipped.join('; ');
         document.getElementById('stuckCycleResult').innerHTML =
-          '<div class="settings-row" style="margin-top:8px;"><div class="settings-row-title" style="color:var(--success)">&#10003; ' + res.closed.length + ' cycle ditutup: ' + res.closed.join(', ') + '</div></div>';
+          '<div class="settings-row" style="margin-top:8px;"><div class="settings-row-title" style="color:var(--success)">&#10003; ' + msg + '</div></div>';
       }).withFailureHandler(function (err) {
         alert('Gagal menutup cycle. Sila cuba lagi.');
         console.error(err);
-      }).closeStuckCyclesAdmin(selected);
+      }).closeCycleAdmin(cycleIds);
     }
 
     var VIEW_META = {
@@ -914,10 +1015,13 @@
     // Rekod, so automatically ikut date-range filter yang dipilih, tak perlu
     // panggilan google.script.run berasingan.
     //
-    // Kategori dipadan dari teks Status Validasi yang ditulis oleh
-    // validateSequence_() dalam Code.gs SISTEM NOTIFIKASI (bukan dashboard ni)
-    // -- kalau wording ANOMALI diubah kat sana, kena update matching text di
-    // sini jugak supaya kategori kekal tepat.
+    // Kategori dipadan dari teks Status Validasi LEGACY sahaja (format
+    // "ANOMALI: ..." yang ditulis oleh validateSequence_(), fungsi yang
+    // sudah DIRETIRE dalam Code.gs SISTEM NOTIFIKASI -- lihat Phase 9C).
+    // Log_Troli tidak lagi pernah menulis vocabulary ini selepas cutover
+    // (submission ditolak terus ke Rejection_Audit, tidak masuk Log_Troli
+    // langsung), jadi tab ini secara semula jadi hanya memaparkan data
+    // pra-cutover -- tiada tapisan tarikh tambahan diperlukan di sini.
     var ANOMALI_CATEGORY_LABELS = {
       'tap-error': 'Kesilapan Tekan/Urutan',
       'lupa-hantar': 'Lupa Scan Hantar',
@@ -931,41 +1035,23 @@
       'lain-lain': 'neutral'
     };
 
-    // "Kesilapan tick" (Selesai selepas Ambil) boleh bermaksud DUA benda beza:
-    // (a) genuine pembetulan -- ada "Hantar" hari sama, tapi staff/farmasi tersilap
-    //     tekan "Ambil" awal, kemudian betulkan dengan submit "Selesai" semula
-    // (b) sebenarnya "Lupa Hantar" -- takde "Hantar" langsung hari tu, previous
-    //     event "Ambil" cuma kebetulan event terakhir dari cycle LAMA yang dah
-    //     settle, bukan bahagian cycle semasa
-    // Text status je tak boleh bezakan dua ni -- kena check rekod sebenar ada
-    // "Hantar Troli" hari sama untuk wad tu sebelum "Selesai" ni ke tidak.
-    function categorizeAnomaliRecord(record, logForWad) {
+    // "Kesilapan tick" (Selesai selepas Ambil) previously tried to
+    // disambiguate two different legacy meanings by re-scanning logForWad
+    // for a same-day Hantar -- that was an independent Hantar/Selesai
+    // pairing computation living in the dashboard, which the canonical
+    // architecture (Phase 9H) explicitly requires removing. Both legacy
+    // meanings now fall into the single 'tap-error' bucket; this is a
+    // slightly coarser classification for that one legacy edge case,
+    // accepted deliberately rather than re-deriving cycle pairing here.
+    function categorizeAnomaliRecord(record) {
       var statusText = record.status.toString();
-
       if (statusText.indexOf('Tiada rekod Hantar Troli') > -1) return 'lupa-hantar';
       if (statusText.indexOf('Cycle sebelum belum tamat') > -1) return 'lupa-ambil';
-
-      if (statusText.indexOf('kesilapan tick') > -1) {
-        if (record.event === 'Pengisian ubat selesai') {
-          var recordDate = record.timestamp.substring(0, 10); // 'dd/MM/yyyy'
-          var hasSameDayHantar = logForWad.some(function (r) {
-            return r.event === 'Hantar Troli' && r.timestamp.substring(0, 10) === recordDate && r.timestamp <= record.timestamp;
-          });
-          if (!hasSameDayHantar) return 'lupa-hantar';
-        }
-        return 'tap-error';
-      }
-
+      if (statusText.indexOf('kesilapan tick') > -1) return 'tap-error';
       return 'lain-lain';
     }
 
     function computeAnomaliBreakdown(rawLog) {
-      var byWadLog = {};
-      (rawLog || []).forEach(function (r) {
-        if (!byWadLog[r.wad]) byWadLog[r.wad] = [];
-        byWadLog[r.wad].push(r);
-      });
-
       var byWad = {};
       var byCategory = { 'tap-error': 0, 'lupa-hantar': 0, 'lupa-ambil': 0, 'lain-lain': 0 };
       var records = [];
@@ -975,7 +1061,7 @@
         // PENUTUPAN ADMIN / AUTO-DITUTUP tak start dgn "ANOMALI" -- takkan masuk sini
         if (!status || status.toString().indexOf('ANOMALI') !== 0) return;
 
-        var category = categorizeAnomaliRecord(r, byWadLog[r.wad] || []);
+        var category = categorizeAnomaliRecord(r);
         if (!byWad[r.wad]) byWad[r.wad] = { 'tap-error': 0, 'lupa-hantar': 0, 'lupa-ambil': 0, 'lain-lain': 0, total: 0 };
         byWad[r.wad][category]++;
         byWad[r.wad].total++;
@@ -1046,13 +1132,11 @@
         wadComparison.map(function (w) { return '<option value="' + w.wad + '">' + w.wad + '</option>'; }).join('');
       wadSel.value = curWad;
 
-      // Populate month filter from Piagam data
-      if (!currentData || !currentData.lateList) return;
+      // Populate month filter from the continuous raw event log (never
+      // cutover-sensitive, so this alone covers the full selected range
+      // regardless of rangeMode).
+      if (!currentData) return;
       var months = {};
-      (currentData.lateList || []).forEach(function (r) {
-        if (r.tarikh) { var m = r.tarikh.substring(3, 10); months[m] = true; }
-      });
-      // Also scan rawLog for months
       rawLogAll.forEach(function (r) {
         if (r.timestamp) { var m = r.timestamp.substring(3, 10); months[m] = true; }
       });
@@ -1064,74 +1148,37 @@
       monthSel.value = curMonth;
     }
 
-    function renderMasaViews() {
-      if (!currentData) return;
-      var wadFilter = document.getElementById('masaWadFilter').value;
-      var monthFilter = document.getElementById('masaMonthFilter').value;
-      var dayFilter = document.getElementById('masaDayFilter').value;
-      var DAYS = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
-      var MONTHS_MAP = {'01':'Jan','02':'Feb','03':'Mac','04':'Apr','05':'Mei','06':'Jun','07':'Jul','08':'Ogos','09':'Sep','10':'Okt','11':'Nov','12':'Dis'};
+    // Analisis Masa (Phase 9H): consumes Cycle_Summary/SLA_Summary-derived
+    // per-cycle rows (data.legacy.allCycles / data.canonical.allCycles)
+    // sent by the backend -- it no longer re-pairs Hantar/Selesai/Ambil
+    // from rawLogAll client-side (that was the exact "earliest event
+    // survives" bug class this rewrite exists to eliminate). Legacy and
+    // canonical sections are rendered separately and are never merged into
+    // one table when the selected range is mixed.
+    var DAYS_ = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
 
-      // Build cycle list dari data cycle (lateList + patuh cycles)
-      // We reconstruct from rawLog: pair Hantar + Selesai + Ambil per wad per day
-      var cycles = [];
-      var byWadDate = {};
-
-      rawLogAll.forEach(function (r) {
-        var key = r.wad + '|' + r.timestamp.substring(0, 10);
-        if (!byWadDate[key]) byWadDate[key] = { wad: r.wad, date: r.timestamp.substring(0, 10), hantar: null, selesai: null, ambil: null };
-        if (r.event === 'Hantar Troli') byWadDate[key].hantar = r.timestamp;
-        if (r.event === 'Pengisian ubat selesai') byWadDate[key].selesai = r.timestamp;
-        if (r.event === 'Troli ubat/pesanan ubat telah diambil') byWadDate[key].ambil = r.timestamp;
-      });
-
-      Object.keys(byWadDate).forEach(function (k) {
-        var c = byWadDate[k];
-        if (!c.hantar || !c.selesai) return; // incomplete cycle, skip
-        var hTs = new Date(c.hantar.substring(6,10)+'-'+c.hantar.substring(3,5)+'-'+c.hantar.substring(0,2)+'T'+c.hantar.substring(11,16));
-        var sTs = new Date(c.selesai.substring(6,10)+'-'+c.selesai.substring(3,5)+'-'+c.selesai.substring(0,2)+'T'+c.selesai.substring(11,16));
-        var aTs = c.ambil ? new Date(c.ambil.substring(6,10)+'-'+c.ambil.substring(3,5)+'-'+c.ambil.substring(0,2)+'T'+c.ambil.substring(11,16)) : null;
-        var masaPengi = Math.round((sTs - hTs) / 60000);
-        var masaTunggu = aTs ? Math.round((aTs - sTs) / 60000) : null;
-        var dayOfWeek = hTs.getDay();
-        var monthStr = c.hantar.substring(3, 10);
-        cycles.push({
-          wad: c.wad, tarikh: c.hantar.substring(0, 10),
-          tarikhDisplay: c.hantar.substring(0,2) + '/' + c.hantar.substring(3,5) + '/' + c.hantar.substring(6,10),
-          hari: DAYS[dayOfWeek], dayOfWeek: dayOfWeek,
-          monthStr: monthStr,
-          masaHantar: c.hantar.substring(11,16),
-          masaSelesai: c.selesai.substring(11,16),
-          masaAmbil: aTs ? c.ambil.substring(11,16) : null,
-          masaPengiMinit: masaPengi,
-          masaTungguMinit: masaTunggu,
-          patuh: masaPengi <= 240
-        });
-      });
-
-      // Apply filters
-      var filtered = cycles.filter(function (c) {
+    function filterMasaCycles_(allCycles, wadFilter, monthFilter, dayFilter) {
+      return (allCycles || []).filter(function (c) {
         if (wadFilter && c.wad !== wadFilter) return false;
         if (monthFilter && c.monthStr !== monthFilter) return false;
         if (dayFilter !== '' && c.dayOfWeek !== parseInt(dayFilter)) return false;
         return true;
-      });
+      }).sort(function (a, b) { return b.sortKey - a.sortKey; });
+    }
 
-      filtered.sort(function (a, b) { return b.tarikh.localeCompare(a.tarikh); });
-
-      // Render Masa Pengisian table
-      var pengiBox = document.getElementById('masaPengiTable');
+    function renderMasaTableSet_(filtered, pengiElId, tungguElId) {
+      var pengiBox = document.getElementById(pengiElId);
+      if (!pengiBox) return;
       if (filtered.length === 0) {
         pengiBox.innerHTML = '<div class="empty">Tiada cycle dalam penapis dipilih</div>';
       } else {
-        var avgPengi = Math.round(filtered.reduce(function (s, c) { return s + c.masaPengiMinit; }, 0) / filtered.length);
+        var avgPengi = Math.round(filtered.reduce(function (s, c) { return s + (c.masaPengiMinit || 0); }, 0) / filtered.length);
         var patuhCount = filtered.filter(function (c) { return c.patuh; }).length;
         var rows = filtered.map(function (c) {
-          var dur = c.masaPengiMinit >= 60
-            ? Math.floor(c.masaPengiMinit/60) + ' j ' + (c.masaPengiMinit%60) + ' m'
-            : c.masaPengiMinit + ' minit';
-          return '<tr class="row-hover"><td>' + c.wad + '</td><td class="mono">' + c.tarikhDisplay + '</td>' +
-            '<td>' + c.hari + '</td><td class="mono">' + c.masaHantar + '</td><td class="mono">' + c.masaSelesai + '</td>' +
+          var dur = (c.masaPengiMinit === null || c.masaPengiMinit === undefined) ? '&ndash;'
+            : (c.masaPengiMinit >= 60 ? Math.floor(c.masaPengiMinit / 60) + ' j ' + (c.masaPengiMinit % 60) + ' m' : c.masaPengiMinit + ' minit');
+          return '<tr class="row-hover"><td>' + c.wad + '</td><td class="mono">' + c.tarikh + '</td>' +
+            '<td>' + DAYS_[c.dayOfWeek] + '</td><td class="mono">' + c.masaHantar + '</td><td class="mono">' + c.masaSelesai + '</td>' +
             '<td class="mono"><strong>' + dur + '</strong></td>' +
             '<td>' + (c.patuh ? '<span class="badge success">Patuh</span>' : '<span class="badge danger">Lewat</span>') + '</td></tr>';
         }).join('');
@@ -1143,22 +1190,20 @@
           '<table><tr><th>Wad</th><th class="mono">Tarikh</th><th>Hari</th><th class="mono">Hantar</th><th class="mono">Selesai</th><th class="mono">Tempoh</th><th>Status</th></tr>' + rows + '</table>';
       }
 
-      // Render Masa Menunggu table
-      var tungguBox = document.getElementById('masaTungguTable');
-      var filteredTunggu = filtered.filter(function (c) { return c.masaTungguMinit !== null; });
+      var tungguBox = document.getElementById(tungguElId);
+      if (!tungguBox) return;
+      var filteredTunggu = filtered.filter(function (c) { return c.masaTungguMinit !== null && c.masaTungguMinit !== undefined && c.masaAmbil; });
       if (filteredTunggu.length === 0) {
         tungguBox.innerHTML = '<div class="empty">Tiada data masa menunggu dalam penapis dipilih</div>';
       } else {
         var avgTunggu = Math.round(filteredTunggu.reduce(function (s, c) { return s + c.masaTungguMinit; }, 0) / filteredTunggu.length);
         var rows2 = filteredTunggu.map(function (c) {
-          var dur = c.masaTungguMinit >= 60
-            ? Math.floor(c.masaTungguMinit/60) + ' j ' + (c.masaTungguMinit%60) + ' m'
-            : c.masaTungguMinit + ' minit';
+          var dur = c.masaTungguMinit >= 60 ? Math.floor(c.masaTungguMinit / 60) + ' j ' + (c.masaTungguMinit % 60) + ' m' : c.masaTungguMinit + ' minit';
           var badge = c.masaTungguMinit < 10 ? '<span class="badge success">Cepat</span>'
             : c.masaTungguMinit < 20 ? '<span class="badge warning">Sederhana</span>'
             : '<span class="badge danger">Lambat</span>';
-          return '<tr class="row-hover"><td>' + c.wad + '</td><td class="mono">' + c.tarikhDisplay + '</td>' +
-            '<td>' + c.hari + '</td><td class="mono">' + c.masaSelesai + '</td><td class="mono">' + c.masaAmbil + '</td>' +
+          return '<tr class="row-hover"><td>' + c.wad + '</td><td class="mono">' + c.tarikh + '</td>' +
+            '<td>' + DAYS_[c.dayOfWeek] + '</td><td class="mono">' + c.masaSelesai + '</td><td class="mono">' + c.masaAmbil + '</td>' +
             '<td class="mono"><strong>' + dur + '</strong></td><td>' + badge + '</td></tr>';
         }).join('');
         tungguBox.innerHTML =
@@ -1166,6 +1211,41 @@
           '<span style="font-size:12px; color:var(--ink-2);">Purata: <strong style="color:var(--ink)">' + avgTunggu + ' minit</strong></span>' +
           '</div>' +
           '<table><tr><th>Wad</th><th class="mono">Tarikh</th><th>Hari</th><th class="mono">Siap</th><th class="mono">Diambil</th><th class="mono">Tempoh Tunggu</th><th>Respon</th></tr>' + rows2 + '</table>';
+      }
+    }
+
+    function ensureCanonicalMasaPanel_() {
+      var existing = document.getElementById('canonicalMasaPanel');
+      if (existing) return existing;
+      var panel = document.createElement('div');
+      panel.className = 'panel';
+      panel.id = 'canonicalMasaPanel';
+      panel.innerHTML =
+        '<div class="panel-head"><div><div class="panel-title">Selepas Cutover (Kanonik)</div>' +
+        '<div class="panel-sub">Dikira daripada Cycle_Summary sahaja -- TIDAK digabung dengan jadual Legacy di atas.</div></div></div>' +
+        '<div class="table-wrap" id="canonicalMasaPengiTable" style="margin-bottom:18px;"></div>' +
+        '<div class="table-wrap" id="canonicalMasaTungguTable"></div>';
+      document.getElementById('view-masa').appendChild(panel);
+      return panel;
+    }
+
+    function renderMasaViews() {
+      if (!currentData) return;
+      var wadFilter = document.getElementById('masaWadFilter').value;
+      var monthFilter = document.getElementById('masaMonthFilter').value;
+      var dayFilter = document.getElementById('masaDayFilter').value;
+
+      var existingCanonicalPanel = document.getElementById('canonicalMasaPanel');
+      if (existingCanonicalPanel) existingCanonicalPanel.remove();
+
+      var primary = currentData.legacy || currentData.canonical;
+      var primaryFiltered = filterMasaCycles_(primary ? primary.allCycles : [], wadFilter, monthFilter, dayFilter);
+      renderMasaTableSet_(primaryFiltered, 'masaPengiTable', 'masaTungguTable');
+
+      if (currentData.rangeMode === 'mixed' && currentData.canonical) {
+        ensureCanonicalMasaPanel_();
+        var canonicalFiltered = filterMasaCycles_(currentData.canonical.allCycles, wadFilter, monthFilter, dayFilter);
+        renderMasaTableSet_(canonicalFiltered, 'canonicalMasaPengiTable', 'canonicalMasaTungguTable');
       }
     }
 
