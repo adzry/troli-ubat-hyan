@@ -426,3 +426,206 @@ function computeWaitMs_(selesaiTs, genuineAmbilTs) {
   if (!selesaiTs || !genuineAmbilTs) return null;
   return new Date(genuineAmbilTs).getTime() - new Date(selesaiTs).getTime();
 }
+
+// =====================================================================
+// PHASE 9C -- IDEMPOTENCY
+// Bounded-window scan (not full-history) -- a trigger retry of the same
+// FormResponseId happens within seconds/minutes, never hundreds of events
+// later, so this bounds cost regardless of total sheet size while still
+// reliably catching every real retry.
+// =====================================================================
+var IDEMPOTENCY_SCAN_WINDOW_ROWS = 500;
+
+function isDuplicateFormResponse_(ss, formResponseId) {
+  if (!formResponseId) return false; // defensive: no id available, cannot dedupe -- caller proceeds
+
+  var logSheet = ss.getSheetByName(SHEET_LOG_NAME);
+  var lastRow = logSheet.getLastRow();
+  if (lastRow >= 2) {
+    var n = Math.min(IDEMPOTENCY_SCAN_WINDOW_ROWS, lastRow - 1);
+    var startRow = lastRow - n + 1;
+    var ids = logSheet.getRange(startRow, 8, n, 1).getValues();
+    for (var i = 0; i < ids.length; i++) {
+      if (ids[i][0] === formResponseId) return true;
+    }
+  }
+
+  var raSheet = ss.getSheetByName(SHEET_REJECTION_AUDIT);
+  var raLastRow = raSheet.getLastRow();
+  if (raLastRow >= 2) {
+    var rn = Math.min(IDEMPOTENCY_SCAN_WINDOW_ROWS, raLastRow - 1);
+    var raStart = raLastRow - rn + 1;
+    var raIds = raSheet.getRange(raStart, RA_COL.FORM_RESPONSE_ID, rn, 1).getValues();
+    for (var j = 0; j < raIds.length; j++) {
+      if (raIds[j][0] === formResponseId) return true;
+    }
+  }
+
+  return false;
+}
+
+// =====================================================================
+// PHASE 9C -- ACCEPT / REJECT WRITERS
+// =====================================================================
+
+var _auditIdCounter = 0;
+function generateAuditId_() {
+  _auditIdCounter++;
+  return 'AUD_' + new Date().getTime() + '_' + _auditIdCounter;
+}
+
+/**
+ * Appends ONE accepted event row to Log_Troli. NEVER called for a rejected
+ * submission (frozen rules 15/16). statusText is acceptance provenance
+ * ("OK" or "OK (CORRECTION - ...)"), replacing the old anomaly-flag usage
+ * of this column.
+ */
+function writeAcceptedEvent_(ss, wardRaw, eventType, timestamp, nama, jawatan, email, formResponseId, statusText) {
+  var logSheet = ss.getSheetByName(SHEET_LOG_NAME);
+  logSheet.appendRow([timestamp, email || '', wardRaw, eventType, nama || '', jawatan || '', statusText, formResponseId || '']);
+}
+
+/**
+ * Writes ONE Rejection_Audit row. recordType is RECORD_TYPE_REJECTED for a
+ * rejected submission, RECORD_TYPE_AUDIT for a correction/closure/
+ * reconciliation record. rejectedPayload is only meaningful for a rejected
+ * submission (the submitted values, since no Log_Troli row exists for it).
+ */
+function writeRejectionAudit_(ss, fields) {
+  var sheet = ss.getSheetByName(SHEET_REJECTION_AUDIT);
+  var row = new Array(RA_HEADERS.length);
+  row[RA_COL.AUDIT_ID - 1] = generateAuditId_();
+  row[RA_COL.RECORD_TYPE - 1] = fields.recordType;
+  row[RA_COL.TIMESTAMP - 1] = new Date();
+  row[RA_COL.CYCLE_ID - 1] = fields.cycleId || '';
+  row[RA_COL.WARD - 1] = fields.ward || '';
+  row[RA_COL.OPERATIONAL_DAY - 1] = fields.operationalDay || '';
+  row[RA_COL.EVENT_TYPE - 1] = fields.eventType || '';
+  row[RA_COL.FORM_RESPONSE_ID - 1] = fields.formResponseId || '';
+  row[RA_COL.REJECTED_PAYLOAD - 1] = fields.rejectedPayload || '';
+  row[RA_COL.PREVIOUS_VALUE - 1] = fields.previousValue || '';
+  row[RA_COL.NEW_VALUE - 1] = fields.newValue || '';
+  row[RA_COL.PREVIOUS_STATE - 1] = fields.previousState || '';
+  row[RA_COL.RESULTING_STATE - 1] = fields.resultingState || '';
+  row[RA_COL.REASON_CODE - 1] = fields.reasonCode || '';
+  row[RA_COL.REASON_TEXT - 1] = fields.reasonText || '';
+  row[RA_COL.ACTOR_TYPE - 1] = fields.actorType || 'SYSTEM';
+  row[RA_COL.ACTOR_IDENTITY - 1] = fields.actorIdentity || '';
+  row[RA_COL.EVENT_ROW_REF - 1] = fields.eventRowRef || '';
+  row[RA_COL.IDEMPOTENCY_KEY - 1] = fields.idempotencyKey || fields.formResponseId || '';
+  row[RA_COL.METADATA - 1] = fields.metadata || '';
+  sheet.appendRow(row);
+}
+
+// =====================================================================
+// PHASE 9C -- PIPELINE ORCHESTRATOR
+// Called by onFormSubmit (Code.gs) while holding the script lock. Pure
+// orchestration around evaluateTransition_ -- this function does not itself
+// decide business outcomes, it only sequences reads/writes around the one
+// canonical decision function.
+// =====================================================================
+
+/**
+ * @returns {{status:string}} status is 'ACCEPTED', 'ACCEPTED_CORRECTION',
+ *   'ACCEPTED_EXCEPTION', or 'REJECTED' -- for logging/diagnostics only,
+ *   never consumed by any live business decision downstream.
+ */
+function processFormSubmission_(ss, input) {
+  // input: {wardRaw, eventType, timestamp, nama, jawatan, email, formResponseId}
+  var wardResolution = resolveWard_(ss, input.wardRaw);
+  if (!wardResolution.ok) {
+    writeRejectionAudit_(ss, {
+      recordType: RECORD_TYPE_REJECTED,
+      ward: input.wardRaw,
+      eventType: input.eventType,
+      formResponseId: input.formResponseId,
+      rejectedPayload: JSON.stringify(input),
+      reasonCode: wardResolution.reasonCode,
+      reasonText: wardResolution.reasonCode === REASON_WARD_INACTIVE
+        ? 'Wad "' + input.wardRaw + '" wujud dalam Ward_Master tetapi tidak aktif (cth. Wad Test) -- tidak dibenarkan masuk statistik operasi.'
+        : 'Wad "' + input.wardRaw + '" tidak dikenali dalam Ward_Master.',
+      actorType: 'SYSTEM'
+    });
+    return { status: 'REJECTED' };
+  }
+
+  var operationalDay = resolveOperationalDay_(input.timestamp);
+  var cycleId = deriveCycleId_(wardResolution.wardCode, operationalDay);
+
+  var cycleSheet = ss.getSheetByName(SHEET_CYCLE_SUMMARY);
+  var existing = findCycleSummaryRow_(cycleSheet, cycleId);
+  var cycleObj = existing ? cycleRowToObject_(existing.values) : newCycleObject_(cycleId, wardResolution.wardCode, input.wardRaw, operationalDay);
+  var previousState = cycleObj.currentState;
+
+  var transition = evaluateTransition_(cycleObj.currentState, input.eventType);
+
+  if (transition.decision === 'REJECT') {
+    writeRejectionAudit_(ss, {
+      recordType: RECORD_TYPE_REJECTED,
+      cycleId: cycleId, ward: input.wardRaw, operationalDay: operationalDay,
+      eventType: input.eventType, formResponseId: input.formResponseId,
+      rejectedPayload: JSON.stringify(input),
+      previousState: previousState, resultingState: previousState,
+      reasonCode: transition.reasonCode,
+      reasonText: rejectionReasonText_(transition.reasonCode, input.eventType),
+      actorType: 'SYSTEM'
+    });
+    return { status: 'REJECTED' };
+  }
+
+  // ACCEPT / ACCEPT_CORRECTION / ACCEPT_EXCEPTION -- write the event first.
+  var statusText = transition.decision === 'ACCEPT_CORRECTION'
+    ? 'OK (CORRECTION - supersedes previous ' + input.eventType + ')'
+    : (transition.decision === 'ACCEPT_EXCEPTION' ? 'OK (EXCEPTION)' : 'OK');
+  writeAcceptedEvent_(ss, input.wardRaw, input.eventType, input.timestamp, input.nama, input.jawatan, input.email, input.formResponseId, statusText);
+
+  // Apply the transition to the cycle object.
+  cycleObj.currentState = transition.nextState;
+  if (input.eventType === EVENT_HANTAR) cycleObj.hantarTs = input.timestamp.toISOString();
+  if (input.eventType === EVENT_SELESAI) cycleObj.selesaiTs = input.timestamp.toISOString();
+  if (input.eventType === EVENT_AMBIL) cycleObj.ambilTs = input.timestamp.toISOString();
+  if (transition.isException) cycleObj.isException = true;
+
+  // SLA recompute (frozen: recalculates while active on Hantar/Selesai change).
+  var sla = computeSla_(cycleObj.hantarTs, cycleObj.selesaiTs);
+  cycleObj.tatMs = sla.tatMs;
+  cycleObj.slaStatus = sla.slaStatus;
+
+  // Closure bookkeeping -- ONLY for genuine Ambil completion here (Admin/Auto
+  // closure are separate code paths, Phase 9D). waitMs is null unless this
+  // is a genuine, non-exception Ambil completion from SELESAI_ACTIVE.
+  if (transition.nextState === STATE_COMPLETE_BY_AMBIL) {
+    cycleObj.closureType = 'AMBIL';
+    cycleObj.closedAt = input.timestamp.toISOString();
+    cycleObj.waitMs = (!cycleObj.isException && cycleObj.selesaiTs)
+      ? computeWaitMs_(cycleObj.selesaiTs, cycleObj.ambilTs)
+      : null;
+    if (cycleObj.isException) cycleObj.closureMessage = MSG_AMBIL_BEFORE_SELESAI;
+  }
+
+  writeCycleSummaryRow_(cycleSheet, existing ? existing.rowIndex : null, cycleObj);
+
+  if (transition.decision === 'ACCEPT_CORRECTION') {
+    writeRejectionAudit_(ss, {
+      recordType: RECORD_TYPE_AUDIT,
+      cycleId: cycleId, ward: input.wardRaw, operationalDay: operationalDay,
+      eventType: input.eventType, formResponseId: input.formResponseId,
+      previousValue: input.eventType === EVENT_HANTAR ? String(previousState) : '',
+      newValue: input.timestamp.toISOString(),
+      previousState: previousState, resultingState: transition.nextState,
+      reasonCode: transition.reasonCode, reasonText: 'Rekod ' + input.eventType + ' terkini menggantikan rekod sebelumnya (cycle masih aktif).',
+      actorType: 'SYSTEM'
+    });
+  }
+
+  return { status: transition.decision };
+}
+
+function rejectionReasonText_(reasonCode, eventType) {
+  switch (reasonCode) {
+    case REASON_HANTAR_AFTER_SELESAI: return 'Hantar Troli diterima selepas Selesai pada hari operasi yang sama -- submission tidak sah.';
+    case REASON_HANTAR_AFTER_EXCEPTION: return 'Hantar Troli diterima selepas cycle sudah dalam status pengecualian (Selesai tanpa Hantar) -- tiada backfill dibenarkan.';
+    case REASON_POST_TERMINAL_EVENT: return eventType + ' diterima selepas cycle sudah tamat (frozen) -- ditolak.';
+    default: return 'Submission ditolak (' + reasonCode + ').';
+  }
+}

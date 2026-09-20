@@ -102,161 +102,77 @@ function setupSystem() {
 }
 
 
-// ====== 2. FORM SUBMIT TRIGGER - VALIDATION + SLA CALC ======
+// ====== 2. FORM SUBMIT TRIGGER - CANONICAL PIPELINE (Phase 9C) ======
+// Rewritten around the canonical cycle model (see Canonical.gs). This is an
+// installable Form-bound trigger (registered via .forForm(form).onFormSubmit()
+// in setupSystem()), so e.response (a FormResponse) is available -- this is
+// what makes FormResponseId-based idempotency possible without any trigger
+// reconfiguration.
+//
+// CRITICAL: getLastRow() is no longer used as submission identity anywhere
+// in this function. Idempotency and pipeline sequencing are driven entirely
+// by e.response.getId() and the LockService-guarded critical section below.
 function onFormSubmit(e) {
   var id = PropertiesService.getScriptProperties().getProperty('DB_ID');
   var ss = SpreadsheetApp.openById(id);
-  var logSheet = ss.getSheetByName(SHEET_LOG_NAME);
-  var lastRow = logSheet.getLastRow();
 
-  var currentRow = logSheet.getRange(lastRow, 1, 1, 6).getValues()[0];
-  var wad = currentRow[COL.WAD];
-  var event = currentRow[COL.EVENT];
-  var timestamp = new Date(currentRow[COL.TIMESTAMP]);
+  // Safe to read before the lock: FormResponse fields are immutable per
+  // submission, not shared mutable state.
+  var response = e && e.response;
+  var formResponseId = response ? response.getId() : null;
+  var itemResponses = response ? response.getItemResponses() : null;
 
-  // SATU batched read untuk semua row sebelum ni -- gantikan N+1 getRange() per-row
-  // yang asal (getLastEventForWad_ / findMostRecentRow_ dulu masing-masing loop &
-  // getValue() sendiri; sekarang loop dalam memori atas array yang sama).
-  var priorCount = lastRow - 2; // rows 2 .. lastRow-1 (row 1 = header)
-  var priorRows = priorCount > 0 ? logSheet.getRange(2, 1, priorCount, 6).getValues() : [];
+  var wardRaw, eventType, nama, jawatan;
+  var timestamp = response ? response.getTimestamp() : new Date();
+  var email = response ? response.getRespondentEmail() : '';
 
-  var previousEvent = getLastEventForWad_(priorRows, wad);
-  var validasi = validateSequence_(previousEvent, event);
-  logSheet.getRange(lastRow, COL.STATUS_VALIDASI + 1).setValue(validasi.status);
-
-  if (!validasi.ok) {
-    notifyAnomali_(wad, event, previousEvent, validasi.status);
-    // Tak return -- alarm/notifikasi tetap proceed walau anomali (staff kena tahu troli
-    // siap walaupun urutan pelik). SLA calc di bawah handle sendiri kes tiada pairing sah.
+  if (itemResponses && itemResponses.length >= 4) {
+    // Form item order: Wad, Jenis Tindakan, Nama, Jawatan (per setupSystem()).
+    wardRaw = itemResponses[0].getResponse();
+    eventType = itemResponses[1].getResponse();
+    nama = itemResponses[2].getResponse();
+    jawatan = itemResponses[3].getResponse();
+  } else {
+    // Defensive fallback (e.g. manual test run without a real FormResponse):
+    // fall back to reading the just-appended row, matching the shape the
+    // rest of the pipeline expects. This path has no FormResponseId, so
+    // idempotency simply cannot dedupe it -- acceptable for a manual test
+    // invocation, never expected on a real Form submission.
+    var logSheetFallback = ss.getSheetByName(SHEET_LOG_NAME);
+    var lastRowFallback = logSheetFallback.getLastRow();
+    var rowFallback = logSheetFallback.getRange(lastRowFallback, 1, 1, 6).getValues()[0];
+    wardRaw = rowFallback[COL.WAD];
+    eventType = rowFallback[COL.EVENT];
+    nama = rowFallback[COL.NAMA];
+    jawatan = rowFallback[COL.JAWATAN];
+    timestamp = new Date(rowFallback[COL.TIMESTAMP]);
+    email = rowFallback[COL.EMAIL];
   }
 
-  if (event === EVENT_SELESAI) {
-    var hantarRow = findMostRecentRow_(priorRows, wad, EVENT_HANTAR);
-    if (hantarRow) {
-      recordSlaResult_(wad, new Date(hantarRow[COL.TIMESTAMP]), timestamp);
-    } else {
-      // FIX: cycle ni dulu senyap-senyap hilang terus dari SLA_Summary sebab tiada
-      // rekod Hantar untuk pairing. Sekarang direkod sebagai partial row supaya cycle
-      // tetap kekal dalam statistik (count wujud), cuma TAT ditanda tak dapat dikira.
-      recordSlaPartial_(wad, timestamp);
-    }
+  var lock = LockService.getScriptLock();
+  var gotLock = lock.tryLock(30000);
+  if (!gotLock) {
+    // Frozen rule: a lock failure is NOT a business rejection -- it must
+    // never be written as a rejected business event. Nothing is written;
+    // Apps Script's own trigger retry is relied on to attempt this
+    // FormResponseId again later (idempotency then makes the retry safe).
+    Logger.log('onFormSubmit: gagal dapat lock dalam masa yang ditetapkan -- FormResponseId=' + formResponseId + ' tidak diproses, menunggu retry.');
+    return;
   }
 
-  if (event === EVENT_AMBIL) {
-    var selesaiRow = findMostRecentRow_(priorRows, wad, EVENT_SELESAI);
-    if (selesaiRow) {
-      updateSlaAmbil_(wad, new Date(selesaiRow[COL.TIMESTAMP]), timestamp);
-    }
-  }
-}
-
-
-// ====== 3. SEQUENCE VALIDATION LOGIC ======
-// Urutan yang sah: (tiada/Ambil Balik) -> Hantar Troli -> Selesai Isi Farmasi -> Ambil Balik Troli
-function validateSequence_(previousEvent, currentEvent) {
-  if (currentEvent === EVENT_HANTAR) {
-    if (previousEvent === EVENT_HANTAR || previousEvent === EVENT_SELESAI) {
-      return { ok: false, status: 'ANOMALI: Cycle sebelum belum tamat (belum Ambil Balik)' };
-    }
-    return { ok: true, status: 'OK' };
-  }
-
-  if (currentEvent === EVENT_SELESAI) {
-    if (previousEvent === EVENT_AMBIL) {
-      return { ok: false, status: 'ANOMALI: Pembetulan selepas kesilapan tick - rekod "Selesai Isi Farmasi" ini disubmit selepas "Ambil Balik" yang mungkin tersilap. SLA mungkin tidak tepat untuk cycle ini, sila semak manual.' };
-    }
-    if (previousEvent !== EVENT_HANTAR) {
-      return { ok: false, status: 'ANOMALI: Tiada rekod Hantar Troli untuk wad ini' };
-    }
-    return { ok: true, status: 'OK' };
-  }
-
-  if (currentEvent === EVENT_AMBIL) {
-    if (previousEvent === EVENT_HANTAR) {
-      return { ok: false, status: 'ANOMALI: Kemungkinan kesilapan tick - troli ditanda diambil tanpa rekod Selesai Isi Farmasi terlebih dahulu. Sila semak jika ini patut menjadi "Selesai Isi Farmasi".' };
-    }
-    if (previousEvent !== EVENT_SELESAI) {
-      return { ok: false, status: 'ANOMALI: Troli belum direkod Selesai Isi oleh Farmasi' };
-    }
-    return { ok: true, status: 'OK' };
-  }
-
-  return { ok: false, status: 'ANOMALI: Jenis tindakan tidak dikenali' };
-}
-
-
-// ====== 4. HELPER - CARI EVENT DALAM ARRAY YANG DAH DIBATCH (bukan sheet call lagi) ======
-function getLastEventForWad_(rows, wad) {
-  for (var r = rows.length - 1; r >= 0; r--) {
-    if (rows[r][COL.WAD] === wad) return rows[r][COL.EVENT];
-  }
-  return null;
-}
-
-function findMostRecentRow_(rows, wad, eventType) {
-  for (var r = rows.length - 1; r >= 0; r--) {
-    if (rows[r][COL.WAD] === wad && rows[r][COL.EVENT] === eventType) return rows[r];
-  }
-  return null;
-}
-
-
-// ====== 5. SLA RECORDING ======
-function recordSlaResult_(wad, hantarTime, selesaiTime) {
-  var id = PropertiesService.getScriptProperties().getProperty('DB_ID');
-  var ss = SpreadsheetApp.openById(id);
-  var slaSheet = ss.getSheetByName(SHEET_SLA_NAME);
-
-  var durasiMs = selesaiTime.getTime() - hantarTime.getTime();
-  var durasiJam = (durasiMs / (1000 * 60 * 60)).toFixed(2);
-  var statusSla = durasiMs <= SLA_LIMIT_MS ? 'PATUH (<=4 jam)' : 'LEWAT (>4 jam)';
-  var tarikh = Utilities.formatDate(hantarTime, 'Asia/Kuala_Lumpur', 'dd/MM/yyyy');
-
-  slaSheet.appendRow([wad, tarikh, hantarTime, selesaiTime, durasiJam, statusSla, '', '']);
-}
-
-// FIX (isu #3 review): cycle "Selesai" tanpa "Hantar" berpadanan -- rekod partial row
-// supaya cycle tetap kekal dalam SLA_Summary (count sah), tapi TAT jelas ditanda N/A.
-function recordSlaPartial_(wad, selesaiTime) {
-  var id = PropertiesService.getScriptProperties().getProperty('DB_ID');
-  var ss = SpreadsheetApp.openById(id);
-  var slaSheet = ss.getSheetByName(SHEET_SLA_NAME);
-  var tarikh = Utilities.formatDate(selesaiTime, 'Asia/Kuala_Lumpur', 'dd/MM/yyyy');
-
-  slaSheet.appendRow([wad, tarikh, '', selesaiTime, '', 'TAT TIDAK DAPAT DIKIRA (tiada rekod Hantar Troli)', '', '']);
-}
-
-function updateSlaAmbil_(wad, selesaiTime, ambilTime) {
-  var id = PropertiesService.getScriptProperties().getProperty('DB_ID');
-  var ss = SpreadsheetApp.openById(id);
-  var slaSheet = ss.getSheetByName(SHEET_SLA_NAME);
-  var lastRow = slaSheet.getLastRow();
-  if (lastRow < 2) return;
-
-  // Batched read (dulu getRange().getValue() per-cell dalam loop)
-  var data = slaSheet.getRange(2, 1, lastRow - 1, 8).getValues();
-  for (var i = data.length - 1; i >= 0; i--) {
-    var row = data[i];
-    var rowWad = row[0];
-    var rowSelesai = row[3] ? new Date(row[3]) : null;
-    var rowAmbil = row[6];
-
-    if (rowWad === wad && rowSelesai && rowSelesai.getTime() === selesaiTime.getTime() && !rowAmbil) {
-      var durasiTungguMs = ambilTime.getTime() - selesaiTime.getTime();
-      var durasiTungguJam = (durasiTungguMs / (1000 * 60 * 60)).toFixed(2);
-      var sheetRow = i + 2;
-      slaSheet.getRange(sheetRow, 7, 1, 2).setValues([[ambilTime, durasiTungguJam]]);
+  try {
+    if (formResponseId && isDuplicateFormResponse_(ss, formResponseId)) {
+      Logger.log('onFormSubmit: FormResponseId=' + formResponseId + ' sudah diproses -- retry diabaikan (idempotent).');
       return;
     }
+
+    processFormSubmission_(ss, {
+      wardRaw: wardRaw, eventType: eventType, timestamp: timestamp,
+      nama: nama, jawatan: jawatan, email: email, formResponseId: formResponseId
+    });
+  } finally {
+    lock.releaseLock();
   }
-}
-
-
-// ====== 6. ANOMALI NOTIFICATION (optional email ke admin) ======
-function notifyAnomali_(wad, event, previousEvent, statusMsg) {
-  Logger.log('ANOMALI DIKESAN: Wad=' + wad + ', Event=' + event + ', Previous=' + previousEvent + ', Status=' + statusMsg);
-  // Uncomment dan tukar email kalau nak notification email:
-  // MailApp.sendEmail('adzrysapie@gmail.com', 'Anomali Sistem Troli Ubat', statusMsg + ' (Wad: ' + wad + ')');
 }
 
 
