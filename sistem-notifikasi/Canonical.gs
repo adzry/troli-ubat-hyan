@@ -726,3 +726,247 @@ function createAutoClosureTrigger_() {
   ScriptApp.newTrigger('runAutoClosure_').timeBased().everyDays(1).atHour(0).create();
   Logger.log('Trigger dicipta: runAutoClosure_() akan run setiap hari lebih kurang jam 00:00.');
 }
+
+// =====================================================================
+// PHASE 9E -- RECONCILIATION
+// Time-driven (default every 15 minutes -- an engineering configuration,
+// not a business rule), bounded to today's + yesterday's operational days
+// only (a cycle cannot be older than one day before Auto Closure would
+// terminate it, and this bound is exactly what keeps reconciliation from
+// ever touching ambiguous/old history automatically). Replays accepted
+// Log_Troli events through the SAME evaluateTransition_ the live pipeline
+// uses -- never a second, independent interpretation.
+// =====================================================================
+
+var RECONCILIATION_WINDOW_DAYS = 2; // today + yesterday
+
+/**
+ * Deterministically replays a chronologically-sorted list of accepted
+ * {eventType, timestamp} events for ONE cycle through evaluateTransition_,
+ * starting from NOT_STARTED. Returns the resulting cycle object shape
+ * (same fields as cycleRowToObject_) -- this is what Cycle_Summary SHOULD
+ * contain if every write had succeeded.
+ */
+function replayCycleFromEvents_(cycleId, wardCode, ward, operationalDay, events) {
+  var obj = newCycleObject_(cycleId, wardCode, ward, operationalDay);
+  events.forEach(function (ev) {
+    var t = evaluateTransition_(obj.currentState, ev.eventType);
+    if (t.decision === 'REJECT') return; // replay only ever applies ACCEPT* decisions to accepted history
+    obj.currentState = t.nextState;
+    if (ev.eventType === EVENT_HANTAR) obj.hantarTs = ev.timestamp;
+    if (ev.eventType === EVENT_SELESAI) obj.selesaiTs = ev.timestamp;
+    if (ev.eventType === EVENT_AMBIL) obj.ambilTs = ev.timestamp;
+    if (t.isException) obj.isException = true;
+  });
+  var sla = computeSla_(obj.hantarTs, obj.selesaiTs);
+  obj.tatMs = sla.tatMs;
+  obj.slaStatus = sla.slaStatus;
+  if (obj.currentState === STATE_COMPLETE_BY_AMBIL) {
+    obj.closureType = 'AMBIL';
+    obj.waitMs = (!obj.isException && obj.selesaiTs) ? computeWaitMs_(obj.selesaiTs, obj.ambilTs) : null;
+    if (obj.isException) obj.closureMessage = MSG_AMBIL_BEFORE_SELESAI;
+  }
+  return obj;
+}
+
+function reconcileCycles_() {
+  var id = PropertiesService.getScriptProperties().getProperty('DB_ID');
+  var ss = SpreadsheetApp.openById(id);
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    Logger.log('reconcileCycles_: gagal dapat lock -- akan cuba lagi pada firing seterusnya.');
+    return { repaired: 0, anomalies: 0, skipped: 'lock_timeout' };
+  }
+
+  try {
+    var windowDays = {};
+    for (var d = 0; d < RECONCILIATION_WINDOW_DAYS; d++) {
+      var day = new Date();
+      day.setDate(day.getDate() - d);
+      windowDays[resolveOperationalDay_(day)] = true;
+    }
+
+    var logSheet = ss.getSheetByName(SHEET_LOG_NAME);
+    var lastRow = logSheet.getLastRow();
+    var repaired = 0, anomalies = 0;
+    var seenFormResponseIds = {};
+    var duplicateFormResponseIds = {};
+
+    if (lastRow >= 2) {
+      var allRows = logSheet.getRange(2, 1, lastRow - 1, 8).getValues();
+      var byCycle = {}; // cycleId -> {wardCode, ward, operationalDay, events:[{eventType,timestamp}]}
+
+      allRows.forEach(function (row) {
+        var ts = new Date(row[COL.TIMESTAMP]);
+        var opDay = resolveOperationalDay_(ts);
+        if (!windowDays[opDay]) return; // outside bounded window -- never touched automatically
+
+        var frId = row[7];
+        if (frId) {
+          if (seenFormResponseIds[frId]) duplicateFormResponseIds[frId] = true;
+          seenFormResponseIds[frId] = true;
+        }
+
+        var wardRaw = row[COL.WAD];
+        var wardResolution = resolveWard_(ss, wardRaw);
+        if (!wardResolution.ok) return; // shouldn't happen for an accepted row -- if it does, reconciliation cannot resolve a cycle identity for it, so it cannot be replayed (not a case reconciliation is authorized to fix)
+
+        var cycleId = deriveCycleId_(wardResolution.wardCode, opDay);
+        if (!byCycle[cycleId]) byCycle[cycleId] = { wardCode: wardResolution.wardCode, ward: wardRaw, operationalDay: opDay, events: [] };
+        byCycle[cycleId].events.push({ eventType: row[COL.EVENT], timestamp: ts.toISOString(), tsObj: ts });
+      });
+
+      var cycleSheet = ss.getSheetByName(SHEET_CYCLE_SUMMARY);
+
+      Object.keys(byCycle).forEach(function (cycleId) {
+        var group = byCycle[cycleId];
+        group.events.sort(function (a, b) { return a.tsObj - b.tsObj; });
+        var expected = replayCycleFromEvents_(cycleId, group.wardCode, group.ward, group.operationalDay, group.events);
+
+        var found = findCycleSummaryRow_(cycleSheet, cycleId);
+
+        if (!found) {
+          // Case (a): accepted events exist but Cycle_Summary is entirely
+          // missing -- deterministic repair, write the full replayed row.
+          writeCycleSummaryRow_(cycleSheet, null, expected);
+          writeRejectionAudit_(ss, {
+            recordType: RECORD_TYPE_AUDIT, cycleId: cycleId, ward: group.ward, operationalDay: group.operationalDay,
+            resultingState: expected.currentState, reasonCode: REASON_RECONCILIATION_REPAIR,
+            reasonText: 'Cycle_Summary tiada row langsung untuk cycle ini walaupun rekod diterima wujud dalam Log_Troli -- dibina semula dari replay deterministik.',
+            actorType: 'SYSTEM'
+          });
+          repaired++;
+          return;
+        }
+
+        var actual = cycleRowToObject_(found.values);
+
+        if (isTerminalState_(actual.currentState) && actual.closureType !== 'AMBIL') {
+          // ADMIN/AUTO closure: pure event-replay can never validate this
+          // (closure is a separate operation, outside the transition
+          // matrix), so instead check case (d): is the closure audited?
+          var hasAuditEvidence = rejectionAuditHasClosureEvidence_(ss, cycleId, actual.closureType);
+          if (!hasAuditEvidence) {
+            writeRejectionAudit_(ss, {
+              recordType: RECORD_TYPE_AUDIT, cycleId: cycleId, ward: group.ward, operationalDay: group.operationalDay,
+              previousState: actual.currentState, resultingState: actual.currentState,
+              reasonCode: REASON_RECONCILIATION_REPAIR,
+              reasonText: 'Cycle ditutup (' + actual.closureType + ') tetapi rekod audit tiada -- audit dibina semula tanpa mengubah status cycle.',
+              actorType: 'SYSTEM'
+            });
+            repaired++;
+          }
+          return; // never touches CurrentState/ClosureType/ClosureMessage of a terminal row
+        }
+
+        if (isTerminalState_(actual.currentState) && actual.closureType === 'AMBIL') {
+          if (expected.currentState !== STATE_COMPLETE_BY_AMBIL) {
+            // Case (b): Cycle_Summary claims a genuine-Ambil completion that
+            // accepted Log_Troli history does NOT support. This could mean a
+            // real operational fact happened outside the recorded trail --
+            // reconciliation has no authority to invent or retract that.
+            // Flag only, never touch the row.
+            writeRejectionAudit_(ss, {
+              recordType: RECORD_TYPE_AUDIT, cycleId: cycleId, ward: group.ward, operationalDay: group.operationalDay,
+              previousState: actual.currentState, resultingState: actual.currentState,
+              reasonCode: REASON_RECONCILIATION_ANOMALY,
+              reasonText: 'Cycle_Summary menunjukkan COMPLETE_BY_AMBIL tetapi tiada rekod Ambil diterima yang menyokongnya dalam tetingkap semakan -- memerlukan semakan manual, TIDAK diubah secara automatik.',
+              actorType: 'SYSTEM'
+            });
+            anomalies++;
+          } else if (actual.tatMs === null && expected.tatMs !== null) {
+            // Narrow, safe repair: derived metric fields left null by a
+            // crash between the state-write and the metric-write, uniquely
+            // determined by this row's OWN already-accepted timestamps.
+            actual.tatMs = expected.tatMs; actual.slaStatus = expected.slaStatus;
+            if (actual.waitMs === null && expected.waitMs !== null) actual.waitMs = expected.waitMs;
+            writeCycleSummaryRow_(cycleSheet, found.rowIndex, actual);
+            writeRejectionAudit_(ss, {
+              recordType: RECORD_TYPE_AUDIT, cycleId: cycleId, ward: group.ward, operationalDay: group.operationalDay,
+              previousState: actual.currentState, resultingState: actual.currentState,
+              reasonCode: REASON_RECONCILIATION_REPAIR,
+              reasonText: 'Medan terbitan (TatMs/WaitMs) kosong pada row yang sudah tamat -- diisi semula dari cap masa yang sudah diterima pada row yang sama.',
+              actorType: 'SYSTEM'
+            });
+            repaired++;
+          }
+          return;
+        }
+
+        // Non-terminal Cycle_Summary row: safe to fully repair from replay
+        // if it disagrees with what accepted history supports (Case a
+        // variant -- e.g. Log_Troli has a Selesai the crashed write never
+        // reached). Never applies here if it would REGRESS the state
+        // (replay producing something "earlier" than what's stored would
+        // itself be a case-(b)-style anomaly, not a repair).
+        var stateRank = { NOT_STARTED: 0, HANTAR_ACTIVE: 1, SELESAI_ACTIVE: 2, EXCEPTION_SELESAI_WITHOUT_HANTAR: 2 };
+        var actualRank = stateRank.hasOwnProperty(actual.currentState) ? stateRank[actual.currentState] : -1;
+        var expectedRank = stateRank.hasOwnProperty(expected.currentState) ? stateRank[expected.currentState] : -1;
+
+        if (isTerminalState_(expected.currentState) || expectedRank > actualRank) {
+          writeCycleSummaryRow_(cycleSheet, found.rowIndex, expected);
+          writeRejectionAudit_(ss, {
+            recordType: RECORD_TYPE_AUDIT, cycleId: cycleId, ward: group.ward, operationalDay: group.operationalDay,
+            previousState: actual.currentState, resultingState: expected.currentState,
+            reasonCode: REASON_RECONCILIATION_REPAIR,
+            reasonText: 'Cycle_Summary (' + actual.currentState + ') tertinggal berbanding rekod diterima dalam Log_Troli -- dikemaskini semula melalui replay deterministik.',
+            actorType: 'SYSTEM'
+          });
+          repaired++;
+        } else if (expectedRank < actualRank) {
+          // Stored state is further along than accepted history alone
+          // explains -- flag, never regress it automatically.
+          writeRejectionAudit_(ss, {
+            recordType: RECORD_TYPE_AUDIT, cycleId: cycleId, ward: group.ward, operationalDay: group.operationalDay,
+            previousState: actual.currentState, resultingState: actual.currentState,
+            reasonCode: REASON_RECONCILIATION_ANOMALY,
+            reasonText: 'Cycle_Summary (' + actual.currentState + ') lebih maju daripada yang disokong replay rekod diterima -- memerlukan semakan manual.',
+            actorType: 'SYSTEM'
+          });
+          anomalies++;
+        }
+      });
+    }
+
+    Object.keys(duplicateFormResponseIds).forEach(function (frId) {
+      writeRejectionAudit_(ss, {
+        recordType: RECORD_TYPE_AUDIT, formResponseId: frId,
+        reasonCode: REASON_RECONCILIATION_ANOMALY,
+        reasonText: 'FormResponseId ' + frId + ' dijumpai berulang dalam Log_Troli yang diterima -- sepatutnya dihalang oleh semakan idempotensi. Isyarat pepijat, bukan dipadam/digabung secara automatik.',
+        actorType: 'SYSTEM'
+      });
+      anomalies++;
+    });
+
+    Logger.log('reconcileCycles_: ' + repaired + ' dibaiki, ' + anomalies + ' anomali dibendera.');
+    return { repaired: repaired, anomalies: anomalies };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function rejectionAuditHasClosureEvidence_(ss, cycleId, closureType) {
+  var sheet = ss.getSheetByName(SHEET_REJECTION_AUDIT);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return false;
+  var expectedReason = closureType === 'ADMIN' ? REASON_ADMIN_CLOSURE : REASON_AUTO_CLOSURE;
+  var data = sheet.getRange(2, RA_COL.CYCLE_ID, lastRow - 1, RA_COL.REASON_CODE - RA_COL.CYCLE_ID + 1).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][0] === cycleId && data[i][RA_COL.REASON_CODE - RA_COL.CYCLE_ID] === expectedReason) return true;
+  }
+  return false;
+}
+
+/**
+ * ONE-TIME setup: registers the 15-minute reconciliation trigger.
+ */
+function createReconciliationTrigger_() {
+  var existing = ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === 'reconcileCycles_';
+  });
+  existing.forEach(function (t) { ScriptApp.deleteTrigger(t); });
+
+  ScriptApp.newTrigger('reconcileCycles_').timeBased().everyMinutes(15).create();
+  Logger.log('Trigger dicipta: reconcileCycles_() akan run setiap 15 minit.');
+}
