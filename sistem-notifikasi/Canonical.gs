@@ -264,3 +264,165 @@ function resolveWard_(ss, rawWardText) {
 function deriveCycleId_(wardCode, operationalDay) {
   return wardCode + '_' + operationalDay;
 }
+
+// =====================================================================
+// PHASE 9B -- CANONICAL TRANSITION ENGINE
+// This is the ONE canonical cycle-interpretation function in the system.
+// It is pure (no sheet I/O) so it can be unit-tested directly and reused
+// identically by the live write pipeline, reconciliation, and Auto Closure.
+// It is deliberately a lookup table over (currentState, eventType), per
+// the frozen Phase 9 transition spec -- not re-derived ad hoc anywhere else.
+// =====================================================================
+
+/**
+ * @param {string} currentState one of the 7 canonical states
+ * @param {string} eventType EVENT_HANTAR / EVENT_SELESAI / EVENT_AMBIL
+ * @returns {{decision:string, nextState:(string|null), isException:boolean,
+ *            reasonCode:(string|null)}}
+ *   decision is one of: 'ACCEPT', 'ACCEPT_CORRECTION', 'ACCEPT_EXCEPTION', 'REJECT'
+ */
+function evaluateTransition_(currentState, eventType) {
+  if (eventType !== EVENT_HANTAR && eventType !== EVENT_SELESAI && eventType !== EVENT_AMBIL) {
+    return { decision: 'REJECT', nextState: null, isException: false, reasonCode: REASON_UNRECOGNIZED_EVENT_TYPE };
+  }
+
+  if (isTerminalState_(currentState)) {
+    // Frozen rules 12/13/14: any event after completion is REJECT + AUDIT,
+    // regardless of event type. Terminal cycles are immutable (rule 10/11).
+    return { decision: 'REJECT', nextState: null, isException: false, reasonCode: REASON_POST_TERMINAL_EVENT };
+  }
+
+  switch (currentState) {
+    case STATE_NOT_STARTED:
+      if (eventType === EVENT_HANTAR) return { decision: 'ACCEPT', nextState: STATE_HANTAR_ACTIVE, isException: false, reasonCode: null };
+      if (eventType === EVENT_SELESAI) return { decision: 'ACCEPT', nextState: STATE_EXCEPTION_SELESAI_WITHOUT_HANTAR, isException: true, reasonCode: null };
+      if (eventType === EVENT_AMBIL) return { decision: 'ACCEPT_EXCEPTION', nextState: STATE_COMPLETE_BY_AMBIL, isException: true, reasonCode: null };
+      break;
+
+    case STATE_HANTAR_ACTIVE:
+      if (eventType === EVENT_HANTAR) return { decision: 'ACCEPT_CORRECTION', nextState: STATE_HANTAR_ACTIVE, isException: false, reasonCode: REASON_SUPERSEDED_HANTAR };
+      if (eventType === EVENT_SELESAI) return { decision: 'ACCEPT', nextState: STATE_SELESAI_ACTIVE, isException: false, reasonCode: null };
+      if (eventType === EVENT_AMBIL) return { decision: 'ACCEPT_EXCEPTION', nextState: STATE_COMPLETE_BY_AMBIL, isException: true, reasonCode: null };
+      break;
+
+    case STATE_SELESAI_ACTIVE:
+      if (eventType === EVENT_HANTAR) return { decision: 'REJECT', nextState: null, isException: false, reasonCode: REASON_HANTAR_AFTER_SELESAI };
+      if (eventType === EVENT_SELESAI) return { decision: 'ACCEPT_CORRECTION', nextState: STATE_SELESAI_ACTIVE, isException: false, reasonCode: REASON_SUPERSEDED_SELESAI };
+      if (eventType === EVENT_AMBIL) return { decision: 'ACCEPT', nextState: STATE_COMPLETE_BY_AMBIL, isException: false, reasonCode: null };
+      break;
+
+    case STATE_EXCEPTION_SELESAI_WITHOUT_HANTAR:
+      if (eventType === EVENT_HANTAR) return { decision: 'REJECT', nextState: null, isException: false, reasonCode: REASON_HANTAR_AFTER_EXCEPTION };
+      // Duplicate Selesai while still in the exception state: the frozen
+      // correction/supersession model (rules 8/9) applies to "the same
+      // event type while active" without carving out this state, so a
+      // repeat Selesai here supersedes and the cycle remains in exception.
+      if (eventType === EVENT_SELESAI) return { decision: 'ACCEPT_CORRECTION', nextState: STATE_EXCEPTION_SELESAI_WITHOUT_HANTAR, isException: true, reasonCode: REASON_SUPERSEDED_SELESAI };
+      if (eventType === EVENT_AMBIL) return { decision: 'ACCEPT_EXCEPTION', nextState: STATE_COMPLETE_BY_AMBIL, isException: true, reasonCode: null };
+      break;
+  }
+
+  // Should be unreachable given the switch above covers all 4 non-terminal
+  // states and all 3 recognized event types -- fail safe rather than silent.
+  return { decision: 'REJECT', nextState: null, isException: false, reasonCode: REASON_UNRECOGNIZED_EVENT_TYPE };
+}
+
+// =====================================================================
+// PHASE 9B -- Cycle_Summary ACCESS
+// =====================================================================
+
+/**
+ * Finds the Cycle_Summary row for cycleId. Returns {rowIndex, values} where
+ * rowIndex is the 1-indexed sheet row, or null if no row exists yet.
+ * O(n) scan of a sheet expected to hold only ~15 rows/day (Phase 8 §13 --
+ * a dedicated index sheet was evaluated and found unnecessary at this scale).
+ */
+function findCycleSummaryRow_(sheet, cycleId) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  var data = sheet.getRange(2, 1, lastRow - 1, CS_HEADERS.length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][CS_COL.CYCLE_ID - 1] === cycleId) return { rowIndex: i + 2, values: data[i] };
+  }
+  return null;
+}
+
+function cycleRowToObject_(values) {
+  if (!values) return null;
+  return {
+    cycleId: values[CS_COL.CYCLE_ID - 1],
+    wardCode: values[CS_COL.WARD_CODE - 1],
+    ward: values[CS_COL.WARD - 1],
+    operationalDay: values[CS_COL.OPERATIONAL_DAY - 1],
+    currentState: values[CS_COL.CURRENT_STATE - 1],
+    hantarTs: values[CS_COL.HANTAR_TS - 1] || null,
+    selesaiTs: values[CS_COL.SELESAI_TS - 1] || null,
+    ambilTs: values[CS_COL.AMBIL_TS - 1] || null,
+    isException: values[CS_COL.IS_EXCEPTION - 1] === true,
+    tatMs: values[CS_COL.TAT_MS - 1] === '' ? null : values[CS_COL.TAT_MS - 1],
+    slaStatus: values[CS_COL.SLA_STATUS - 1] || null,
+    waitMs: values[CS_COL.WAIT_MS - 1] === '' ? null : values[CS_COL.WAIT_MS - 1],
+    closureType: values[CS_COL.CLOSURE_TYPE - 1] || null,
+    closureMessage: values[CS_COL.CLOSURE_MESSAGE - 1] || null,
+    scheduledBoundary: values[CS_COL.SCHEDULED_BOUNDARY - 1] || null,
+    closedAt: values[CS_COL.CLOSED_AT - 1] || null
+  };
+}
+
+function cycleObjectToRow_(o) {
+  var row = new Array(CS_HEADERS.length);
+  row[CS_COL.CYCLE_ID - 1] = o.cycleId;
+  row[CS_COL.WARD_CODE - 1] = o.wardCode;
+  row[CS_COL.WARD - 1] = o.ward;
+  row[CS_COL.OPERATIONAL_DAY - 1] = o.operationalDay;
+  row[CS_COL.CURRENT_STATE - 1] = o.currentState;
+  row[CS_COL.HANTAR_TS - 1] = o.hantarTs || '';
+  row[CS_COL.SELESAI_TS - 1] = o.selesaiTs || '';
+  row[CS_COL.AMBIL_TS - 1] = o.ambilTs || '';
+  row[CS_COL.IS_EXCEPTION - 1] = !!o.isException;
+  row[CS_COL.TAT_MS - 1] = (o.tatMs === null || o.tatMs === undefined) ? '' : o.tatMs;
+  row[CS_COL.SLA_STATUS - 1] = o.slaStatus || '';
+  row[CS_COL.WAIT_MS - 1] = (o.waitMs === null || o.waitMs === undefined) ? '' : o.waitMs;
+  row[CS_COL.CLOSURE_TYPE - 1] = o.closureType || '';
+  row[CS_COL.CLOSURE_MESSAGE - 1] = o.closureMessage || '';
+  row[CS_COL.SCHEDULED_BOUNDARY - 1] = o.scheduledBoundary || '';
+  row[CS_COL.CLOSED_AT - 1] = o.closedAt || '';
+  return row;
+}
+
+function writeCycleSummaryRow_(sheet, existingRowIndex, cycleObj) {
+  var row = cycleObjectToRow_(cycleObj);
+  if (existingRowIndex) {
+    sheet.getRange(existingRowIndex, 1, 1, row.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+}
+
+function newCycleObject_(cycleId, wardCode, ward, operationalDay) {
+  return {
+    cycleId: cycleId, wardCode: wardCode, ward: ward, operationalDay: operationalDay,
+    currentState: STATE_NOT_STARTED, hantarTs: null, selesaiTs: null, ambilTs: null,
+    isException: false, tatMs: null, slaStatus: null, waitMs: null,
+    closureType: null, closureMessage: null, scheduledBoundary: null, closedAt: null
+  };
+}
+
+// =====================================================================
+// PHASE 9B -- SLA / WAITING TIME (frozen: SLA = Hantar->Selesai, 4h;
+// waiting = Selesai->genuine Ambil only; both frozen at terminal state)
+// =====================================================================
+
+function computeSla_(hantarTs, selesaiTs) {
+  if (!hantarTs || !selesaiTs) return { tatMs: null, slaStatus: 'TIDAK_DAPAT_DIKIRA' };
+  var tatMs = new Date(selesaiTs).getTime() - new Date(hantarTs).getTime();
+  return { tatMs: tatMs, slaStatus: tatMs <= SLA_LIMIT_MS ? 'PATUH' : 'LEWAT' };
+}
+
+// waitMs is computed ONLY for genuine Ambil completions; Admin/Auto closure
+// callers must set waitMs = null directly and must never call this helper
+// with a closure timestamp masquerading as an Ambil timestamp.
+function computeWaitMs_(selesaiTs, genuineAmbilTs) {
+  if (!selesaiTs || !genuineAmbilTs) return null;
+  return new Date(genuineAmbilTs).getTime() - new Date(selesaiTs).getTime();
+}
