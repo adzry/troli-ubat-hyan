@@ -193,88 +193,92 @@ function doGet(e) {
 }
 
 
-// ====== 8. DASHBOARD STATUS - STATUS SEMASA + TIMELINE HARI INI ======
+// ====== 8. LIVE API - CANONICAL Cycle_Summary CONTRACT (Phase 9F) ======
+// Rewritten around Cycle_Summary as the single source of truth. The
+// frontend consumes this contract directly and performs NO independent
+// pairing/state-derivation of its own (see Index.html, Phase 9G).
+//
+// Legacy fields removed from the contract entirely (confirmed via grep in
+// Phase 8 that none were ever consumed by the frontend): lastRow,
+// pendingAlarm, tatFormatted, tatLabel. pendingAnomali is replaced by
+// isException.
 function getWadStatus(wad) {
   var id = PropertiesService.getScriptProperties().getProperty('DB_ID');
   if (!id) return { error: 'Sistem belum di-setup.' };
-
   var ss = SpreadsheetApp.openById(id);
-  var sheet = ss.getSheetByName(SHEET_LOG_NAME);
-  var lastRow = sheet.getLastRow();
 
-  if (lastRow < 2) {
-    return { lastRow: lastRow, currentState: 'TIADA_CYCLE', timeline: [], pendingAlarm: false };
+  var wardResolution = resolveWard_(ss, wad);
+  var todayOperationalDay = resolveOperationalDay_(new Date());
+
+  var emptyResponse = {
+    cycleId: null, ward: wad, operationalDay: todayOperationalDay,
+    currentState: STATE_NOT_STARTED, hantarTs: null, selesaiTs: null, ambilTs: null,
+    closureType: null, closureMessage: null, isException: false,
+    tatMs: null, slaStatus: null, waitMs: null, timeline: []
+  };
+
+  if (!wardResolution.ok) {
+    // An unresolvable/inactive ward parameter has no cycle identity to
+    // report against -- return the NOT_STARTED shape rather than an error,
+    // since this is a read-only status view, not a submission path.
+    return emptyResponse;
   }
 
-  var allData = sheet.getRange(2, 1, lastRow - 1, 7).getValues(); // dah batched, satu call je
-  var todayStr = Utilities.formatDate(new Date(), 'Asia/Kuala_Lumpur', 'dd/MM/yyyy');
-
-  var timeline = [];
-  var lastEventForWad = null;
-  var lastEventTimestamp = null;
-  var lastEventAnomali = false;
-  var lastHantarTimestamp = null;
-  var lastSelesaiTimestamp = null;
-
-  for (var i = 0; i < allData.length; i++) {
-    var row = allData[i];
-    var rowWad = row[COL.WAD];
-    var rowTimestamp = new Date(row[COL.TIMESTAMP]);
-    var rowDateStr = Utilities.formatDate(rowTimestamp, 'Asia/Kuala_Lumpur', 'dd/MM/yyyy');
-
-    if (rowWad !== wad) continue;
-
-    lastEventForWad = row[COL.EVENT];
-    lastEventTimestamp = rowTimestamp;
-    lastEventAnomali = row[COL.STATUS_VALIDASI] && row[COL.STATUS_VALIDASI].toString().indexOf('ANOMALI') === 0;
-
-    if (row[COL.EVENT] === EVENT_HANTAR) lastHantarTimestamp = rowTimestamp;
-    if (row[COL.EVENT] === EVENT_SELESAI) lastSelesaiTimestamp = rowTimestamp;
-
-    if (rowDateStr === todayStr) {
-      timeline.push({
-        event: row[COL.EVENT],
-        nama: row[COL.NAMA],
-        jawatan: row[COL.JAWATAN],
-        time: Utilities.formatDate(rowTimestamp, 'Asia/Kuala_Lumpur', 'HH:mm'),
-        anomali: row[COL.STATUS_VALIDASI] && row[COL.STATUS_VALIDASI].toString().indexOf('ANOMALI') === 0
-      });
-    }
-  }
-
-  var currentState = 'TIADA_CYCLE';
-  if (lastEventForWad === EVENT_HANTAR) currentState = 'MENUNGGU_PENGISIAN';
-  else if (lastEventForWad === EVENT_SELESAI) currentState = 'SEDIA_DIAMBIL';
-  else if (lastEventForWad === EVENT_AMBIL) currentState = 'SELESAI';
-
-  var tatMinit = null;
-  var tatLabel = null;
-
-  if (currentState === 'MENUNGGU_PENGISIAN' && lastHantarTimestamp) {
-    tatMinit = Math.round((new Date().getTime() - lastHantarTimestamp.getTime()) / 60000);
-    tatLabel = 'sedang berjalan';
-  } else if ((currentState === 'SEDIA_DIAMBIL' || currentState === 'SELESAI') && lastHantarTimestamp && lastSelesaiTimestamp) {
-    tatMinit = Math.round((lastSelesaiTimestamp.getTime() - lastHantarTimestamp.getTime()) / 60000);
-    tatLabel = 'selesai';
-  }
-
-  var tatFormatted = null;
-  if (tatMinit !== null) {
-    var jam = Math.floor(tatMinit / 60);
-    var minit = tatMinit % 60;
-    tatFormatted = jam > 0 ? (jam + ' j ' + minit + ' m') : (minit + ' minit');
-  }
+  var cycleId = deriveCycleId_(wardResolution.wardCode, todayOperationalDay);
+  var cycleSheet = ss.getSheetByName(SHEET_CYCLE_SUMMARY);
+  var found = findCycleSummaryRow_(cycleSheet, cycleId);
+  var cycle = found ? cycleRowToObject_(found.values) : newCycleObject_(cycleId, wardResolution.wardCode, wad, todayOperationalDay);
 
   return {
-    lastRow: lastRow,
-    currentState: currentState,
-    pendingAlarm: currentState === 'SEDIA_DIAMBIL',
-    pendingAnomali: currentState === 'SEDIA_DIAMBIL' && lastEventAnomali,
-    lastEventTime: lastEventTimestamp ? Utilities.formatDate(lastEventTimestamp, 'Asia/Kuala_Lumpur', 'HH:mm') : null,
-    tatFormatted: tatFormatted,
-    tatLabel: tatLabel,
-    timeline: timeline
+    cycleId: cycle.cycleId,
+    ward: cycle.ward,
+    operationalDay: cycle.operationalDay,
+    currentState: cycle.currentState,
+    hantarTs: cycle.hantarTs,
+    selesaiTs: cycle.selesaiTs,
+    ambilTs: cycle.ambilTs,
+    closureType: cycle.closureType,
+    closureMessage: cycle.closureMessage,
+    isException: !!cycle.isException,
+    tatMs: cycle.tatMs,
+    slaStatus: cycle.slaStatus,
+    waitMs: cycle.waitMs,
+    timeline: buildTimelineForCycle_(ss, wardResolution.wardCode, todayOperationalDay)
   };
+}
+
+// Server-scoped timeline: every accepted Log_Troli row for TODAY whose ward
+// text resolves to this same WardCode (handles alias variants), never
+// filtered/paired client-side. isCorrection/isException are read from the
+// acceptance-provenance text written by processFormSubmission_, not
+// re-derived by string-matching for "ANOMALI" (that vocabulary no longer
+// exists in Log_Troli going forward -- rejections never reach this sheet).
+function buildTimelineForCycle_(ss, wardCode, operationalDay) {
+  var sheet = ss.getSheetByName(SHEET_LOG_NAME);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+
+  var wardMap = loadWardMasterMap_(ss); // loaded once, reused per row below
+  var data = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
+  var timeline = [];
+  for (var i = 0; i < data.length; i++) {
+    var row = data[i];
+    var ts = new Date(row[COL.TIMESTAMP]);
+    if (resolveOperationalDay_(ts) !== operationalDay) continue;
+    var entry = wardMap[normWardText_(row[COL.WAD])];
+    if (!entry || entry.wardCode !== wardCode) continue;
+
+    var statusText = String(row[COL.STATUS_VALIDASI] || '');
+    timeline.push({
+      event: row[COL.EVENT],
+      nama: row[COL.NAMA],
+      jawatan: row[COL.JAWATAN],
+      time: Utilities.formatDate(ts, TZ, 'HH:mm'),
+      isCorrection: statusText.indexOf('CORRECTION') > -1,
+      isException: statusText.indexOf('EXCEPTION') > -1
+    });
+  }
+  return timeline;
 }
 
 
