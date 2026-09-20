@@ -298,9 +298,21 @@
     var pollInterval, pollFailCount = 0;
     var snoozedUntil = null, SNOOZE_DURATION_MS = 15 * 60 * 1000;
     var statusTerakhir = '';
-    var hantarTimestamp = null, selesaiTimestamp = null, ambilTimestamp = null;
     var masaClockInterval = null, tungguInterval = null;
     var SLA_MS = 4 * 60 * 60 * 1000;
+
+    // Canonical states (see sistem-notifikasi/Canonical.gs) -- the frontend
+    // is a VIEW over these, never a second business-rule engine. It branches
+    // directly on these names; it never pairs Hantar/Selesai/Ambil, never
+    // computes a cycle identity, and never derives TAT/waiting time from
+    // raw timeline rows itself.
+    var ST_NOT_STARTED = 'NOT_STARTED';
+    var ST_HANTAR_ACTIVE = 'HANTAR_ACTIVE';
+    var ST_SELESAI_ACTIVE = 'SELESAI_ACTIVE';
+    var ST_EXCEPTION = 'EXCEPTION_SELESAI_WITHOUT_HANTAR';
+    var ST_COMPLETE_AMBIL = 'COMPLETE_BY_AMBIL';
+    var ST_COMPLETE_ADMIN = 'COMPLETE_BY_ADMIN';
+    var ST_COMPLETE_AUTO = 'COMPLETE_BY_AUTO';
 
     var EVENT_LABEL = {
       'Hantar Troli':'Troli dihantar',
@@ -339,11 +351,15 @@
       return h>0?(h+' j '+m+' m'):(m+' min');
     }
 
-    // Parses an "HH:mm" timeline event time against today's date.
-    function parseEventTime_(ev,base){
-      var p=ev.time.split(':'),ts=new Date(base);
-      ts.setHours(parseInt(p[0]));ts.setMinutes(parseInt(p[1]));
-      return ts;
+    // Formats a full ISO timestamp (from the canonical API contract) as
+    // "HH:mm" for display. This replaces the old parseEventTime_, which
+    // parsed only an "HH:mm" string against "today" and could never
+    // represent any other date -- the API now sends real ISO timestamps,
+    // so no client-side date inference is needed or performed.
+    function fmtTime_(iso){
+      if(!iso)return '';
+      var d=new Date(iso);
+      return pad(d.getHours())+':'+pad(d.getMinutes());
     }
 
     // MASA PENGISIAN (Hantar -> Selesai)
@@ -432,11 +448,13 @@
     function bunyikanSuara(wad,status,isReminder){
       if(!('speechSynthesis'in window))return;
       var teks='',konfig={rate:.95,pitch:.98};
-      if(status==='SEDIA_DIAMBIL'){
+      if(status===ST_SELESAI_ACTIVE||status===ST_EXCEPTION){
         if(isReminder){teks='Peringatan. Troli ubat untuk '+wad+', masih belum diambil. Sila segera ke farmasi.';konfig={rate:.88,pitch:1.02};}
         else{teks='Perhatian. Troli ubat untuk '+wad+', telah selesai diisi. Sila ambil di Farmasi Pesakit Dalam.';konfig={rate:.9,pitch:1.0};}
-      }else if(status==='MENUNGGU_PENGISIAN'){teks='Troli ubat untuk '+wad+', telah dihantar ke farmasi.';konfig={rate:.95,pitch:.95};}
-      else if(status==='SELESAI'){teks='Troli ubat untuk '+wad+', telah diambil balik ke wad.';konfig={rate:.95,pitch:.95};}
+      }else if(status===ST_HANTAR_ACTIVE){teks='Troli ubat untuk '+wad+', telah dihantar ke farmasi.';konfig={rate:.95,pitch:.95};}
+      else if(status===ST_COMPLETE_AMBIL){teks='Troli ubat untuk '+wad+', telah diambil balik ke wad.';konfig={rate:.95,pitch:.95};}
+      else if(status===ST_COMPLETE_ADMIN){teks='Troli ubat untuk '+wad+', telah ditutup oleh pentadbir.';konfig={rate:.95,pitch:.95};}
+      else if(status===ST_COMPLETE_AUTO){teks='Troli ubat untuk '+wad+', telah ditutup secara automatik oleh sistem.';konfig={rate:.95,pitch:.95};}
       else return;
       window.speechSynthesis.cancel();
       var u=new SpeechSynthesisUtterance(teks);
@@ -485,28 +503,14 @@
         statusTerakhir=res.currentState;
       }
 
-      // Parse timestamps dari timeline -- discis kepada pergerakan TERKINI sahaja.
-      // "Hantar Troli" paling akhir menandakan permulaan pergerakan semasa; Selesai/
-      // Ambil dicari hanya DARI titik itu ke depan, supaya cap masa pergerakan lepas
-      // tidak pernah tercampur dengan pergerakan semasa (lihat PASS 5A/5B).
-      if(res.timeline&&res.timeline.length>0){
-        var base=new Date();base.setSeconds(0);base.setMilliseconds(0);
-        var lastHantarIdx=-1;
-        for(var hi=0;hi<res.timeline.length;hi++){
-          if(res.timeline[hi].event==='Hantar Troli')lastHantarIdx=hi;
-        }
-        var scopeStart=lastHantarIdx>=0?lastHantarIdx:0;
-        var hEv=null,sEv=null,aEv=null;
-        for(var si=scopeStart;si<res.timeline.length;si++){
-          var ev=res.timeline[si];
-          if(ev.event==='Hantar Troli')hEv=ev;
-          if(ev.event==='Pengisian ubat selesai')sEv=ev;
-          if(ev.event==='Troli ubat/pesanan ubat telah diambil')aEv=ev;
-        }
-        hantarTimestamp=hEv?parseEventTime_(hEv,base):null;
-        selesaiTimestamp=sEv?parseEventTime_(sEv,base):null;
-        ambilTimestamp=aEv?parseEventTime_(aEv,base):null;
-      }
+      // Timestamps come directly from the canonical API contract (full ISO
+      // strings, already scoped server-side to this ward's current cycle).
+      // No pairing, no "which Hantar belongs to the current cycle" logic,
+      // no today-only date inference -- all of that is now the backend's
+      // job (Cycle_Summary), never the frontend's.
+      var hantarTs=res.hantarTs?new Date(res.hantarTs):null;
+      var selesaiTs=res.selesaiTs?new Date(res.selesaiTs):null;
+      var ambilTs=res.ambilTs?new Date(res.ambilTs):null;
 
       var headline=document.getElementById('headline'),subline=document.getElementById('subline');
       var reminderBox=document.getElementById('reminderBox'),alarmBox=document.getElementById('alarmBox');
@@ -517,22 +521,24 @@
       reminderBox.style.display='none';
       alarmBox.style.display='none';
 
-      if(res.currentState==='MENUNGGU_PENGISIAN'){
+      if(res.currentState===ST_HANTAR_ACTIVE){
         headline.className='state-text state-waiting';
         headline.innerText='Troli sedang diisi oleh farmasi';
-        subline.innerText='Troli dihantar pada '+res.lastEventTime;
+        subline.innerText='Troli dihantar pada '+fmtTime_(res.hantarTs);
         setStopBtnVisible(false);document.getElementById('reenableBtn').style.display='none';stopTitleFlash();
 
         durationBox.style.display='block';
         pengiRow.style.display='flex';
         tungguRow.style.display='none';
         resetTungguClock();
-        if(hantarTimestamp)startMasaClock(hantarTimestamp);
+        if(hantarTs)startMasaClock(hantarTs);
 
-      }else if(res.currentState==='SEDIA_DIAMBIL'){
+      }else if(res.currentState===ST_SELESAI_ACTIVE||res.currentState===ST_EXCEPTION){
         headline.className='state-text state-ready';
         headline.innerText='Menunggu troli diambil';
-        subline.innerText='Pengisian siap pada '+res.lastEventTime;
+        subline.innerText=res.currentState===ST_EXCEPTION
+          ? 'Pengisian direkod tanpa Hantar Troli — status luar biasa'
+          : 'Pengisian siap pada '+fmtTime_(res.selesaiTs);
 
         alarmBox.style.display='block';
         var nowMs=Date.now(),isSnoozed=snoozedUntil!==null&&nowMs<snoozedUntil;
@@ -544,7 +550,7 @@
           if(snoozedUntil!==null){bunyikanSuara(WAD_NAME,res.currentState,true);announce(alarmBody.innerText);}
           snoozedUntil=null;
         }
-        if(res.pendingAnomali){reminderBox.style.display='block';}
+        if(res.isException){reminderBox.style.display='block';}
         if(!alarmActive&&!isSnoozed)alarmActive=true;
         if(alarmActive&&!isSnoozed){
           if(soundUnlocked){document.getElementById('alarmSound').play();document.getElementById('reenableBtn').style.display='none';}
@@ -554,23 +560,41 @@
         setStopBtnVisible(true);
 
         durationBox.style.display='block';
-        pengiRow.style.display='flex';
+        // EXCEPTION_SELESAI_WITHOUT_HANTAR has no Hantar to measure a
+        // filling duration from -- that row is hidden entirely rather than
+        // showing a meaningless/zero value.
+        pengiRow.style.display=(res.currentState===ST_EXCEPTION)?'none':'flex';
         tungguRow.style.display='flex';
-        if(hantarTimestamp&&selesaiTimestamp)showFinalMasa(hantarTimestamp,selesaiTimestamp);
-        if(selesaiTimestamp)startTungguClock(selesaiTimestamp);
+        if(hantarTs&&selesaiTs)showFinalMasa(hantarTs,selesaiTs);
+        if(selesaiTs)startTungguClock(selesaiTs);
 
-      }else if(res.currentState==='SELESAI'){
+      }else if(res.currentState===ST_COMPLETE_AMBIL||res.currentState===ST_COMPLETE_ADMIN||res.currentState===ST_COMPLETE_AUTO){
         headline.className='state-text state-done';
-        headline.innerText='Troli telah diambil balik ke wad';
-        subline.innerText='Diambil pada '+res.lastEventTime;
         alarmActive=false;snoozedUntil=null;
         setStopBtnVisible(false);document.getElementById('reenableBtn').style.display='none';stopTitleFlash();
 
+        if(res.currentState===ST_COMPLETE_AMBIL){
+          headline.innerText='Troli telah diambil balik ke wad';
+          // Admin/Auto Closure must remain visually distinguishable from a
+          // genuine Ambil -- the closureMessage (only present for those
+          // two) is what carries that distinction; a genuine Ambil has none.
+          subline.innerText=res.isException?res.closureMessage:'Diambil pada '+fmtTime_(res.ambilTs);
+        }else{
+          // COMPLETE_BY_ADMIN / COMPLETE_BY_AUTO: display the fixed
+          // closure message verbatim -- the frontend does not need to know
+          // which of Auto Closure's three sub-cases produced it.
+          headline.innerText=res.currentState===ST_COMPLETE_ADMIN?'Troli ditutup oleh pentadbir':'Troli ditutup secara automatik';
+          subline.innerText=res.closureMessage||'';
+        }
+
         durationBox.style.display='block';
-        pengiRow.style.display='flex';
-        tungguRow.style.display='flex';
-        if(hantarTimestamp&&selesaiTimestamp)showFinalMasa(hantarTimestamp,selesaiTimestamp);
-        if(selesaiTimestamp&&ambilTimestamp)showFinalTunggu(selesaiTimestamp,ambilTimestamp);
+        pengiRow.style.display=hantarTs?'flex':'none';
+        // waitMs is null for every non-genuine-Ambil closure (frozen rule) --
+        // the "menunggu" row is hidden rather than showing a fabricated or
+        // zero duration for Admin/Auto Closure.
+        tungguRow.style.display=(res.waitMs!==null&&res.waitMs!==undefined)?'flex':'none';
+        if(hantarTs&&selesaiTs)showFinalMasa(hantarTs,selesaiTs);else resetMasaClock();
+        if(selesaiTs&&ambilTs&&res.waitMs!==null&&res.waitMs!==undefined)showFinalTunggu(selesaiTs,ambilTs);
         else resetTungguClock();
 
       }else{
@@ -580,7 +604,6 @@
         setStopBtnVisible(false);document.getElementById('reenableBtn').style.display='none';stopTitleFlash();
         durationBox.style.display='none';
         resetMasaClock();resetTungguClock();
-        hantarTimestamp=null;selesaiTimestamp=null;ambilTimestamp=null;
       }
 
       renderTimeline(res.timeline||[], res.currentState);
@@ -592,15 +615,19 @@
       list.innerHTML='';
 
       var pendingLabel=null;
-      if(currentState==='MENUNGGU_PENGISIAN')pendingLabel='Pengisian belum selesai';
-      else if(currentState==='SEDIA_DIAMBIL')pendingLabel='Menunggu troli diambil';
+      if(currentState===ST_HANTAR_ACTIVE)pendingLabel='Pengisian belum selesai';
+      else if(currentState===ST_SELESAI_ACTIVE||currentState===ST_EXCEPTION)pendingLabel='Menunggu troli diambil';
 
       if(timeline.length===0&&!pendingLabel){empty.style.display='block';return;}
       empty.style.display='none';
 
       timeline.forEach(function(ev,idx){
         var lb=EVENT_LABEL[ev.event]||ev.event;
-        var flag=ev.anomali?'<span class="tl-flag">semak</span>':'';
+        // isCorrection/isException come directly from the backend's
+        // acceptance-provenance record -- never re-derived here by
+        // string-matching a status column (that "ANOMALI:" vocabulary no
+        // longer exists in Log_Troli under the canonical model).
+        var flag=(ev.isCorrection||ev.isException)?'<span class="tl-flag">semak</span>':'';
         var cls='tl-row';
         // Hantar Troli semantically starts a new movement -- mark it so CSS can
         // add a subtle break, unless it's the very first row (nothing to separate from).
@@ -619,10 +646,10 @@
       });
 
       if(pendingLabel){
-        // SEDIA_DIAMBIL's pending node/label get a restrained amber treatment --
-        // it's the one wait that needs a physical trip to the ward to resolve.
-        // The MENUNGGU_PENGISIAN pending node/label stay neutral.
-        var pendingAccent=currentState==='SEDIA_DIAMBIL'?' pending-amber':'';
+        // SELESAI_ACTIVE/EXCEPTION's pending node/label get a restrained amber
+        // treatment -- it's the one wait that needs a physical trip to the
+        // ward to resolve. HANTAR_ACTIVE's pending node/label stay neutral.
+        var pendingAccent=(currentState===ST_SELESAI_ACTIVE||currentState===ST_EXCEPTION)?' pending-amber':'';
         var pendingCls='tl-node pending'+pendingAccent;
         var pendingTitleCls='tl-title pending'+pendingAccent;
         var pli=document.createElement('li');
