@@ -776,6 +776,16 @@ function createAutoClosureTrigger_() {
   Logger.log('Trigger dicipta: runAutoClosure_() akan run setiap hari lebih kurang jam 00:00.');
 }
 
+/**
+ * Public entry point for createAutoClosureTrigger_() -- see
+ * runCanonicalBootstrap()'s doc comment for why a wrapper is needed
+ * (Apps Script hides any top-level function whose name ends in "_" from
+ * the editor's function selector). No logic of its own.
+ */
+function activateCanonicalAutoClosureTrigger() {
+  createAutoClosureTrigger_();
+}
+
 // =====================================================================
 // PHASE 9E -- RECONCILIATION
 // Time-driven (default every 15 minutes -- an engineering configuration,
@@ -1018,6 +1028,16 @@ function createReconciliationTrigger_() {
 
   ScriptApp.newTrigger('reconcileCycles_').timeBased().everyMinutes(15).create();
   Logger.log('Trigger dicipta: reconcileCycles_() akan run setiap 15 minit.');
+}
+
+/**
+ * Public entry point for createReconciliationTrigger_() -- see
+ * runCanonicalBootstrap()'s doc comment for why a wrapper is needed
+ * (Apps Script hides any top-level function whose name ends in "_" from
+ * the editor's function selector). No logic of its own.
+ */
+function activateCanonicalReconciliationTrigger() {
+  createReconciliationTrigger_();
 }
 
 // =====================================================================
