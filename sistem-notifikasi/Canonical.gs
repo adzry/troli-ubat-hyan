@@ -240,6 +240,28 @@ function setupCanonicalArchitecture_() {
   return created;
 }
 
+/**
+ * Public entry point for setupCanonicalArchitecture_().
+ *
+ * Apps Script's function-selector dropdown only lists top-level functions
+ * whose names do NOT end in "_" -- trailing underscore is Apps Script's
+ * convention for "private/internal," and setupCanonicalArchitecture_ is
+ * named that way deliberately (it's an internal implementation called by
+ * this file's own logic, not originally meant to be run standalone). That
+ * made the one-time production bootstrap impossible to trigger from the
+ * editor UI. This wrapper adds no logic of its own -- it exists solely so
+ * an administrator can select and run the bootstrap from the dropdown.
+ *
+ * Left in place permanently (not removed post-bootstrap): the underlying
+ * function is idempotent -- see setupCanonicalArchitecture_'s own doc
+ * comment -- so this remains safe as a standing admin/maintenance entry
+ * point (e.g. to re-create a sheet that was accidentally deleted) rather
+ * than a one-time-only script that must be cleaned up after use.
+ */
+function runCanonicalBootstrap() {
+  setupCanonicalArchitecture_();
+}
+
 // ====== OPERATIONAL DAY ======
 function resolveOperationalDay_(timestamp) {
   return Utilities.formatDate(timestamp, TZ, 'yyyy-MM-dd');
