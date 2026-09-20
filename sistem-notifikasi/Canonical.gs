@@ -997,3 +997,63 @@ function createReconciliationTrigger_() {
   ScriptApp.newTrigger('reconcileCycles_').timeBased().everyMinutes(15).create();
   Logger.log('Trigger dicipta: reconcileCycles_() akan run setiap 15 minit.');
 }
+
+// =====================================================================
+// PHASE 9I -- HISTORICAL RECONSTRUCTION (retrospective, isolated)
+//
+// Answers ONLY "what would historical records look like under the
+// canonical model?" -- it is NEVER read by getWadStatus, Admin Closure,
+// Auto Closure, or reconciliation, and it never writes to the live
+// Cycle_Summary sheet. Historical Log_Troli rows are NEVER modified by
+// this function (frozen: "do not rewrite historical facts").
+//
+// Run manually/on-demand from the Apps Script editor -- not a trigger.
+// Safe to re-run: it clears and rebuilds ONLY the data rows of
+// Cycle_Summary_Reconstructed_Legacy (rows 1-2, the warning banner and
+// header, are preserved).
+//
+// A historical row that the canonical matrix would have REJECTED (e.g. an
+// old "ANOMALI:"-flagged Hantar-after-Selesai submission) is simply not
+// applied to the replayed cycle -- replayCycleFromEvents_ already skips
+// REJECT decisions -- which is the correct reading of "what would this
+// look like if evaluated under today's rules," not a rewriting of what
+// actually happened (that fact remains, untouched, in Log_Troli itself).
+// =====================================================================
+
+function buildReconstructedLegacyView_() {
+  var id = PropertiesService.getScriptProperties().getProperty('DB_ID');
+  var ss = SpreadsheetApp.openById(id);
+  var logSheet = ss.getSheetByName(SHEET_LOG_NAME);
+  var lastRow = logSheet.getLastRow();
+  if (lastRow < 2) { Logger.log('Log_Troli kosong -- tiada apa untuk dibina semula.'); return { count: 0 }; }
+
+  var allRows = logSheet.getRange(2, 1, lastRow - 1, 8).getValues();
+  var byCycle = {};
+
+  allRows.forEach(function (row) {
+    var ts = new Date(row[COL.TIMESTAMP]);
+    var opDay = resolveOperationalDay_(ts);
+    var wardResolution = resolveWard_(ss, row[COL.WAD]);
+    if (!wardResolution.ok) return; // unresolvable ward text -- skipped, never fabricated a cycle identity for it
+
+    var cycleId = deriveCycleId_(wardResolution.wardCode, opDay);
+    if (!byCycle[cycleId]) byCycle[cycleId] = { wardCode: wardResolution.wardCode, ward: row[COL.WAD], operationalDay: opDay, events: [] };
+    byCycle[cycleId].events.push({ eventType: row[COL.EVENT], timestamp: ts.toISOString(), tsObj: ts });
+  });
+
+  var legacySheet = ss.getSheetByName(SHEET_CYCLE_SUMMARY_LEGACY);
+  var existingLastRow = legacySheet.getLastRow();
+  if (existingLastRow > 2) legacySheet.getRange(3, 1, existingLastRow - 2, CS_HEADERS.length).clearContent();
+
+  var rowsOut = [];
+  Object.keys(byCycle).forEach(function (cycleId) {
+    var group = byCycle[cycleId];
+    group.events.sort(function (a, b) { return a.tsObj - b.tsObj; });
+    var replayed = replayCycleFromEvents_(cycleId, group.wardCode, group.ward, group.operationalDay, group.events);
+    rowsOut.push(cycleObjectToRow_(replayed));
+  });
+
+  if (rowsOut.length > 0) legacySheet.getRange(3, 1, rowsOut.length, CS_HEADERS.length).setValues(rowsOut);
+  Logger.log('buildReconstructedLegacyView_: ' + rowsOut.length + ' cycle dibina semula secara retrospektif ke "' + SHEET_CYCLE_SUMMARY_LEGACY + '". Sheet ini TIDAK digunakan oleh mana-mana logik langsung.');
+  return { count: rowsOut.length };
+}
