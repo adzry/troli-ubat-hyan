@@ -629,3 +629,100 @@ function rejectionReasonText_(reasonCode, eventType) {
     default: return 'Submission ditolak (' + reasonCode + ').';
   }
 }
+
+// =====================================================================
+// PHASE 9D -- AUTO CLOSURE (time-driven, 00:00, self-healing catch-up)
+// Frozen: occurs at the operational-day boundary, never depends on a user
+// event; must inspect ALL open cycles from PAST operational days (not only
+// "yesterday") so a missed trigger firing self-heals on the next successful
+// run with no separate catch-up job. Already-terminal cycles (Admin or a
+// prior Auto run) are structurally excluded by the query itself.
+// =====================================================================
+
+function autoClosureMessageForState_(state) {
+  if (state === STATE_HANTAR_ACTIVE) return MSG_AUTO_CLOSURE_HANTAR_ONLY;
+  if (state === STATE_SELESAI_ACTIVE) return MSG_AUTO_CLOSURE_SELESAI_ONLY;
+  if (state === STATE_EXCEPTION_SELESAI_WITHOUT_HANTAR) return MSG_AUTO_CLOSURE_EXCEPTION;
+  return null; // NOT_STARTED / terminal states are never eligible -- see caller
+}
+
+/**
+ * Registered via createAutoClosureTrigger_() as a daily 00:00 time-driven
+ * trigger. Also safe to invoke manually/administratively at any time -- it
+ * is idempotent (only rows that are non-terminal and from a past
+ * operational day are ever touched; a terminal row simply never matches).
+ */
+function runAutoClosure_() {
+  var id = PropertiesService.getScriptProperties().getProperty('DB_ID');
+  var ss = SpreadsheetApp.openById(id);
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    Logger.log('runAutoClosure_: gagal dapat lock -- akan cuba lagi pada firing seterusnya (self-healing, tiada cycle akan tertinggal ditutup selama-lamanya).');
+    return { closed: 0, skipped: 'lock_timeout' };
+  }
+
+  try {
+    var todayOperationalDay = resolveOperationalDay_(new Date());
+    var sheet = ss.getSheetByName(SHEET_CYCLE_SUMMARY);
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return { closed: 0 };
+
+    var data = sheet.getRange(2, 1, lastRow - 1, CS_HEADERS.length).getValues();
+    var closedCount = 0;
+    var now = new Date();
+
+    for (var i = 0; i < data.length; i++) {
+      var cycleObj = cycleRowToObject_(data[i]);
+      if (isTerminalState_(cycleObj.currentState)) continue; // already terminal -- NO-OP, never reopened
+      if (cycleObj.operationalDay >= todayOperationalDay) continue; // still today or future -- not yet eligible
+
+      var message = autoClosureMessageForState_(cycleObj.currentState);
+      if (!message) continue; // NOT_STARTED has no accepted events -- nothing to close (Phase 8 §12 case D)
+
+      var previousState = cycleObj.currentState;
+      cycleObj.currentState = STATE_COMPLETE_BY_AUTO;
+      cycleObj.closureType = 'AUTO';
+      cycleObj.closureMessage = message;
+      cycleObj.waitMs = null; // frozen: Auto Closure never produces genuine waiting time
+      // ScheduledBoundary is the midnight that should have closed this cycle:
+      // the day after its own operational day.
+      var boundary = new Date(cycleObj.operationalDay + 'T00:00:00');
+      boundary.setDate(boundary.getDate() + 1);
+      cycleObj.scheduledBoundary = boundary.toISOString();
+      cycleObj.closedAt = now.toISOString();
+      // HantarTs/SelesaiTs/AmbilTs/TatMs are NEVER touched here (frozen: Auto
+      // Closure must not alter historical Hantar/Selesai timestamps or SLA).
+
+      writeCycleSummaryRow_(sheet, i + 2, cycleObj);
+
+      writeRejectionAudit_(ss, {
+        recordType: RECORD_TYPE_AUDIT,
+        cycleId: cycleObj.cycleId, ward: cycleObj.ward, operationalDay: cycleObj.operationalDay,
+        previousState: previousState, resultingState: STATE_COMPLETE_BY_AUTO,
+        reasonCode: REASON_AUTO_CLOSURE, reasonText: message,
+        actorType: 'SYSTEM'
+      });
+      closedCount++;
+    }
+
+    Logger.log('runAutoClosure_: ' + closedCount + ' cycle ditutup secara automatik.');
+    return { closed: closedCount };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * ONE-TIME setup: run manually from the Apps Script editor. Registers the
+ * daily 00:00 trigger. Guards against duplicate registration if re-run.
+ */
+function createAutoClosureTrigger_() {
+  var existing = ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === 'runAutoClosure_';
+  });
+  existing.forEach(function (t) { ScriptApp.deleteTrigger(t); });
+
+  ScriptApp.newTrigger('runAutoClosure_').timeBased().everyDays(1).atHour(0).create();
+  Logger.log('Trigger dicipta: runAutoClosure_() akan run setiap hari lebih kurang jam 00:00.');
+}

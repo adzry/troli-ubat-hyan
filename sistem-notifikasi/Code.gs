@@ -507,76 +507,13 @@ function createHealthCheckTrigger() {
 }
 
 
-// ====== 13. ADMIN - MANUAL CLOSE STUCK CYCLES ======
-// PENTING: runHealthCheck() detect stuck cycle dari event TERAKHIR setiap wad
-// dalam Log_Troli -- BUKAN dari SLA_Summary. Sebab tu fungsi ni kena tulis satu
-// row penutup ke Log_Troli sendiri (bukan sekadar edit SLA_Summary), kalau tak
-// wad yang sama akan terus di-flag esok walaupun dah "ditutup".
-//
-// Run manual (dropdown Apps Script Editor) bila troli disahkan dah diambil secara
-// fizikal, tapi staff tak submit Form "Ambil Balik". Untuk setiap wad yang stuck:
-// 1. Tulis SATU row ke Log_Troli, event=Ambil Balik, Nama/Jawatan label jelas
-//    "PENUTUPAN ADMIN" (bukan menyamar sebagai submission staff sebenar)
-// 2. Kemaskini SLA_Summary jika ada row terbuka sepadan -- Masa Ambil & Durasi
-//    Tunggu KEKAL KOSONG (tak fabricate durasi dari masa admin tutup cycle,
-//    sebab itu bukan masa sebenar troli diambil)
-function closeAllStuckCycles() {
-  var id = PropertiesService.getScriptProperties().getProperty('DB_ID');
-  var ss = SpreadsheetApp.openById(id);
-  var logSheet = ss.getSheetByName(SHEET_LOG_NAME);
-  var slaSheet = ss.getSheetByName(SHEET_SLA_NAME);
-
-  var lastRow = logSheet.getLastRow();
-  if (lastRow < 2) { Logger.log('Tiada data dalam Log_Troli.'); return; }
-
-  var allData = logSheet.getRange(2, 1, lastRow - 1, 7).getValues();
-  var now = new Date();
-  var stuckList = [];
-
-  // Cari semua wad stuck -- logic sama macam runHealthCheck()
-  for (var w = 0; w < WAD_LIST.length; w++) {
-    var wad = WAD_LIST[w];
-    var lastEv = null, lastTs = null;
-    for (var j = allData.length - 1; j >= 0; j--) {
-      if (allData[j][COL.WAD] === wad) { lastEv = allData[j][COL.EVENT]; lastTs = new Date(allData[j][COL.TIMESTAMP]); break; }
-    }
-    if (!lastEv || lastEv === EVENT_AMBIL) continue; // takde cycle / dah closed
-    var ageHrs = (now.getTime() - lastTs.getTime()) / 3600000;
-    if (ageHrs <= 6) continue; // belum stuck lagi
-    stuckList.push({ wad: wad, lastEvent: lastEv, lastTs: lastTs });
-  }
-
-  if (stuckList.length === 0) { Logger.log('Tiada stuck cycle dijumpai -- takde apa nak ditutup.'); return; }
-
-  var noteStatus = 'PENUTUPAN ADMIN: troli disahkan sudah diambil secara fizikal, tetapi staf tidak submit Form "Ambil Balik". Masa ambil sebenar tidak direkod.';
-
-  stuckList.forEach(function (c) {
-    // 1. Tulis event penutup ke Log_Troli (jadi event terakhir baru utk wad ni,
-    //    supaya runHealthCheck() esok tak flag wad ni lagi)
-    logSheet.appendRow([now, 'admin-closure@sistem', c.wad, EVENT_AMBIL, 'PENUTUPAN ADMIN', 'Sistem (Admin)', noteStatus]);
-
-    // 2. Kemaskini SLA_Summary jika ada row terbuka sepadan
-    if (c.lastEvent === EVENT_SELESAI) {
-      var slaLastRow = slaSheet.getLastRow();
-      if (slaLastRow >= 2) {
-        var slaData = slaSheet.getRange(2, 1, slaLastRow - 1, 8).getValues();
-        for (var i = slaData.length - 1; i >= 0; i--) {
-          var row = slaData[i];
-          var rowSelesai = row[3] ? new Date(row[3]) : null;
-          if (row[0] === c.wad && rowSelesai && rowSelesai.getTime() === c.lastTs.getTime() && !row[6]) {
-            var sheetRow = i + 2;
-            // Masa Ambil & Durasi Tunggu (lajur G, H) KEKAL KOSONG -- catat status je
-            slaSheet.getRange(sheetRow, 6).setValue(row[5] + ' | ' + noteStatus);
-            break;
-          }
-        }
-      }
-    } else if (c.lastEvent === EVENT_HANTAR) {
-      // Cycle tak sempat capai "Selesai" pun -- rekod row baru sbg partial closure
-      var tarikh = Utilities.formatDate(c.lastTs, 'Asia/Kuala_Lumpur', 'dd/MM/yyyy');
-      slaSheet.appendRow([c.wad, tarikh, c.lastTs, '', '', 'TAT TIDAK DAPAT DIKIRA (tiada rekod Selesai Isi) | ' + noteStatus, '', '']);
-    }
-  });
-
-  Logger.log(stuckList.length + ' cycle ditutup: ' + stuckList.map(function (c) { return c.wad; }).join(', '));
-}
+// ====== 13. [RETIRED] closeAllStuckCycles() ======
+// Replaced by runAutoClosure_() in Canonical.gs (Phase 9D): a 00:00
+// operational-day-boundary trigger with self-healing catch-up, distinct
+// ClosureType='AUTO' bookkeeping on Cycle_Summary, and no synthetic
+// EVENT_AMBIL row written to Log_Troli -- all of which this function's
+// age-based (>6h) model and its "write a fake Ambil labelled PENUTUPAN
+// ADMIN" approach could not satisfy under the frozen Phase 6-9 rules.
+// Confirmed via repository-wide grep before removal: this function was
+// never registered as a trigger anywhere (manual-invocation only) and had
+// no other call sites.
