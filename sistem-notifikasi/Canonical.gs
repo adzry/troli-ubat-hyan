@@ -300,9 +300,13 @@ function normWardText_(v) {
  * with REASON_WARD_INACTIVE, distinct from REASON_UNKNOWN_WARD, so it never
  * silently enters production cycle statistics per the frozen instruction
  * that Wad Test must not be part of production operational statistics.
+ * preloadedWardMap is optional -- pass an already-loaded loadWardMasterMap_()
+ * result to avoid a redundant Ward_Master read when the caller already has
+ * one (e.g. getWadStatus, which also needs it for buildTimelineForCycle_).
+ * Every existing call site omits it and keeps its original behavior.
  */
-function resolveWard_(ss, rawWardText) {
-  var map = loadWardMasterMap_(ss);
+function resolveWard_(ss, rawWardText, preloadedWardMap) {
+  var map = preloadedWardMap || loadWardMasterMap_(ss);
   var entry = map[normWardText_(rawWardText)];
   if (!entry) return { ok: false, reasonCode: REASON_UNKNOWN_WARD };
   if (!entry.active) return { ok: false, reasonCode: REASON_WARD_INACTIVE, wardCode: entry.wardCode };

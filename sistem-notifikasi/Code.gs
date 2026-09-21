@@ -207,7 +207,11 @@ function getWadStatus(wad) {
   if (!id) return { error: 'Sistem belum di-setup.' };
   var ss = SpreadsheetApp.openById(id);
 
-  var wardResolution = resolveWard_(ss, wad);
+  // Loaded once and reused for both resolveWard_ and buildTimelineForCycle_
+  // below -- each previously called loadWardMasterMap_() independently,
+  // reading the whole Ward_Master sheet twice per request.
+  var wardMap = loadWardMasterMap_(ss);
+  var wardResolution = resolveWard_(ss, wad, wardMap);
   var todayOperationalDay = resolveOperationalDay_(new Date());
 
   var emptyResponse = {
@@ -243,7 +247,7 @@ function getWadStatus(wad) {
     tatMs: cycle.tatMs,
     slaStatus: cycle.slaStatus,
     waitMs: cycle.waitMs,
-    timeline: buildTimelineForCycle_(ss, wardResolution.wardCode, todayOperationalDay)
+    timeline: buildTimelineForCycle_(ss, wardResolution.wardCode, todayOperationalDay, wardMap)
   };
 }
 
@@ -267,13 +271,31 @@ function getWadStatus(wad) {
 // accept-pipeline write) over the Forms-native blank-provenance row; ties
 // break on the later timestamp, so a real correction still surfaces its
 // most recent value. Never keyed on timestamp/label alone.
-function buildTimelineForCycle_(ss, wardCode, operationalDay) {
+//
+// Bounded scan (TIMELINE_SCAN_WINDOW_ROWS), not a full-sheet read: rows are
+// always appended (never inserted) by both Google Forms and
+// writeAcceptedEvent_, so today's rows are always among the most recently
+// appended ones. Every poll from every open tab was previously re-reading
+// the ENTIRE Log_Troli sheet (unbounded, growing with total historical
+// volume) -- under concurrent polling plus the now-active
+// runAutoClosure_/reconcileCycles_ triggers writing to the same
+// spreadsheet, this measurably slowed individual getWadStatus calls (one
+// observed instance took 239.986s against a normal ~2-4s), which the
+// google.script.run client-side bridge appears to surface as a null
+// response rather than a clean failure -- see Index.html's handleStatus
+// null-guard. Same bounding pattern already used by
+// isDuplicateFormResponse_'s IDEMPOTENCY_SCAN_WINDOW_ROWS.
+var TIMELINE_SCAN_WINDOW_ROWS = 1000;
+
+function buildTimelineForCycle_(ss, wardCode, operationalDay, preloadedWardMap) {
   var sheet = ss.getSheetByName(SHEET_LOG_NAME);
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
-  var wardMap = loadWardMasterMap_(ss); // loaded once, reused per row below
-  var data = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
+  var wardMap = preloadedWardMap || loadWardMasterMap_(ss);
+  var scanRows = Math.min(TIMELINE_SCAN_WINDOW_ROWS, lastRow - 1);
+  var startRow = lastRow - scanRows + 1;
+  var data = sheet.getRange(startRow, 1, scanRows, 8).getValues();
   var byEventType = {};
   for (var i = 0; i < data.length; i++) {
     var row = data[i];

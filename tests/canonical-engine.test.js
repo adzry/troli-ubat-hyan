@@ -253,13 +253,16 @@ test('S: resolveOperationalDay_ buckets pre/post-midnight KL timestamps into dif
 // and loadWardMasterMap_ read (Log_Troli, Ward_Master), with Log_Troli
 // carrying literal duplicate row pairs per event, mirroring the live data.
 function makeFakeSheet_(rows) {
-  return {
+  var sheet = {
+    lastRangeCalls: [], // records every getRange(startRow, startCol, numRows) call for scan-bound assertions
     getLastRow: function () { return rows.length + 1; }, // +1 for the header row this fake never stores
     getRange: function (startRow, startCol, numRows) {
+      sheet.lastRangeCalls.push({ startRow: startRow, numRows: numRows });
       var slice = rows.slice(startRow - 2, startRow - 2 + numRows);
       return { getValues: function () { return slice; } };
     }
   };
+  return sheet;
 }
 function makeFakeSs_(sheetsByName) {
   return { getSheetByName: function (name) { return sheetsByName[name] || null; } };
@@ -356,6 +359,53 @@ test('T: buildTimelineForCycle_ renders Step 3 (after AMBIL) with exactly one en
   assert.strictEqual(timeline[0].event, 'Hantar Troli', 'chronological order preserved after dedup');
   assert.strictEqual(timeline[1].event, 'Pengisian ubat selesai', 'chronological order preserved after dedup');
   assert.strictEqual(timeline[2].event, 'Troli ubat/pesanan ubat telah diambil', 'chronological order preserved after dedup');
+});
+
+// ---- U. Bounded scan (TIMELINE_SCAN_WINDOW_ROWS) ----
+// Reproduces the real production condition: Log_Troli has grown to 887+
+// rows and keeps growing with every real submission; buildTimelineForCycle_
+// previously read the ENTIRE sheet on every single poll. This proves both
+// that the scan is now genuinely bounded (not just "happens to still find
+// the rows") and that correctness is unaffected for a cycle whose rows
+// still fall well inside that bounded window.
+test('U: buildTimelineForCycle_ bounds its Log_Troli scan to TIMELINE_SCAN_WINDOW_ROWS, not the whole sheet', function () {
+  var wardMasterRows = [['FOR', 'Forensik', 'Forensik', true, new Date()]];
+  var paddingRows = [];
+  for (var i = 0; i < 1200; i++) {
+    paddingRows.push(['2020-01-01T00:00:00Z', 'old@x.com', 'Forensik', 'Hantar Troli', 'Old', 'PPK', 'OK', 'PAD' + i]);
+  }
+  var logRows = paddingRows.concat([
+    ['2026-09-20T19:42:18Z', 'a@x.com', 'Forensik', 'Hantar Troli', 'Scopper Gaban', 'PPK', '', ''],
+    ['2026-09-20T19:42:18Z', 'a@x.com', 'Forensik', 'Hantar Troli', 'Scopper Gaban', 'PPK', 'OK', 'FR1'],
+    ['2026-09-21T02:54:15Z', 'a@x.com', 'Forensik', 'Pengisian ubat selesai', 'Nerona Imu', 'PF', '', ''],
+    ['2026-09-21T02:54:15Z', 'a@x.com', 'Forensik', 'Pengisian ubat selesai', 'Nerona Imu', 'PF', 'OK', 'FR2']
+  ]);
+  var logSheet = makeFakeSheet_(logRows);
+  var ss = makeFakeSs_({ Log_Troli: logSheet, Ward_Master: makeFakeSheet_(wardMasterRows) });
+
+  var timeline = S.buildTimelineForCycle_(ss, 'FOR', '2026-09-21');
+
+  assert.strictEqual(timeline.length, 2, 'correctness preserved for a cycle whose rows fall inside the bounded window');
+  assert.strictEqual(logSheet.lastRangeCalls.length, 1, 'exactly one getRange call, not a full-sheet scan plus a follow-up');
+  assert.strictEqual(logSheet.lastRangeCalls[0].numRows, S.TIMELINE_SCAN_WINDOW_ROWS,
+    'requested exactly the bounded window size (1000), not all 1204 data rows');
+});
+
+// ---- V. resolveWard_'s optional preloadedWardMap (Ward_Master read reuse) ----
+test('V: resolveWard_ produces the same result with or without a preloaded wardMap', function () {
+  var wardMasterRows = [['FOR', 'Forensik', 'Forensik', true, new Date()]];
+  var wardSheet = makeFakeSheet_(wardMasterRows);
+  var ss = makeFakeSs_({ Ward_Master: wardSheet });
+
+  var withoutPreload = S.resolveWard_(ss, 'Forensik');
+  assert.strictEqual(withoutPreload.ok, true);
+  assert.strictEqual(withoutPreload.wardCode, 'FOR');
+  assert.strictEqual(wardSheet.lastRangeCalls.length, 1, 'omitting preloadedWardMap falls back to loading it -- original behavior unchanged');
+
+  var wardMap = S.loadWardMasterMap_(ss);
+  var withPreload = S.resolveWard_(ss, 'Forensik', wardMap);
+  assert.strictEqual(withPreload.ok, true);
+  assert.strictEqual(withPreload.wardCode, 'FOR');
 });
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
