@@ -673,6 +673,17 @@
       pollFailCount++;
       var bar=document.getElementById('errbar');bar.style.display='block';
       bar.innerText='Gagal sambung ke server ('+pollFailCount+'x). Cuba muat semula jika berterusan.';
+      if(pollFailCount===1){
+        // One bonus retry ~3s after the FIRST failure in a streak, instead
+        // of waiting the full 10s poll interval -- observed production
+        // failures are transient (a slow/contended Apps Script<->Sheets
+        // call under concurrent access), not permanent outages, and
+        // usually clear within a few seconds. Gated to exactly once per
+        // failure streak (pollFailCount===1 only) so a sustained failure
+        // never compounds into a retry storm that would add more
+        // concurrent load to an already-contended spreadsheet.
+        setTimeout(refreshStatus, 3000);
+      }
     }
 
     document.getElementById('startBtn').style.display='block';
