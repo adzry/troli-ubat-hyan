@@ -495,6 +495,16 @@
     function refreshStatus(){google.script.run.withSuccessHandler(handleStatus).withFailureHandler(handleError).getWadStatus(WAD_NAME);}
 
     function handleStatus(res){
+      if(!res){
+        // google.script.run's success handler can be invoked with a null
+        // response on a transient server-side failure (timeout/quota/a
+        // redeploy-window hiccup) instead of routing to withFailureHandler --
+        // an Apps Script platform quirk, not something server code controls.
+        // Route it through the same error/retry UI handleError already uses,
+        // rather than let it throw here and silently freeze the page.
+        handleError();
+        return;
+      }
       pollFailCount=0;document.getElementById('errbar').style.display='none';
 
       var stateChanged=res.currentState!==statusTerakhir;
