@@ -296,6 +296,18 @@
     var WAD_NAME = <?!= JSON.stringify(wadName) ?>;
     var alarmActive = false, soundUnlocked = false, notifActive = false;
     var pollInterval, pollFailCount = 0;
+    // Bounded, increasing-backoff bonus retries within a single failure
+    // streak -- confirmed via live Network-tab inspection that a stuck
+    // getWadStatus execution can genuinely take 40+ seconds to resolve
+    // (Google's own google.script.run bridge polls its internal channel
+    // every few seconds waiting for it), so a single 3s retry isn't always
+    // enough. Capped and increasing (never unbounded/constant-interval) so
+    // a sustained hang doesn't pile up more concurrent invocations against
+    // an already-contended spreadsheet -- after these are exhausted,
+    // recovery falls back to the regular 10s pollInterval, which keeps
+    // running indefinitely regardless.
+    var quickRetryCount = 0;
+    var QUICK_RETRY_DELAYS_MS = [3000, 8000, 15000];
     var snoozedUntil = null, SNOOZE_DURATION_MS = 15 * 60 * 1000;
     var statusTerakhir = '';
     var masaClockInterval = null, tungguInterval = null;
@@ -505,7 +517,7 @@
         handleError();
         return;
       }
-      pollFailCount=0;document.getElementById('errbar').style.display='none';
+      pollFailCount=0;quickRetryCount=0;document.getElementById('errbar').style.display='none';
 
       var stateChanged=res.currentState!==statusTerakhir;
       if(stateChanged){
@@ -673,16 +685,18 @@
       pollFailCount++;
       var bar=document.getElementById('errbar');bar.style.display='block';
       bar.innerText='Gagal sambung ke server ('+pollFailCount+'x). Cuba muat semula jika berterusan.';
-      if(pollFailCount===1){
-        // One bonus retry ~3s after the FIRST failure in a streak, instead
-        // of waiting the full 10s poll interval -- observed production
-        // failures are transient (a slow/contended Apps Script<->Sheets
-        // call under concurrent access), not permanent outages, and
-        // usually clear within a few seconds. Gated to exactly once per
-        // failure streak (pollFailCount===1 only) so a sustained failure
-        // never compounds into a retry storm that would add more
-        // concurrent load to an already-contended spreadsheet.
-        setTimeout(refreshStatus, 3000);
+      if(quickRetryCount<QUICK_RETRY_DELAYS_MS.length){
+        // Bonus retry with increasing backoff (3s, then 8s, then 15s) --
+        // confirmed via Network-tab inspection that a stuck getWadStatus
+        // execution can genuinely take 40+ seconds server-side, so a
+        // single quick retry isn't always enough. Bounded to exactly these
+        // 3 attempts per failure streak (quickRetryCount is reset to 0 on
+        // any success in handleStatus) so a sustained hang never turns
+        // into an unbounded retry storm adding more concurrent load to an
+        // already-contended spreadsheet -- once exhausted, recovery falls
+        // back to the regular 10s pollInterval, which keeps running.
+        setTimeout(refreshStatus, QUICK_RETRY_DELAYS_MS[quickRetryCount]);
+        quickRetryCount++;
       }
     }
 
