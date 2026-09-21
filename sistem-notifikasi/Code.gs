@@ -253,6 +253,20 @@ function getWadStatus(wad) {
 // acceptance-provenance text written by processFormSubmission_, not
 // re-derived by string-matching for "ANOMALI" (that vocabulary no longer
 // exists in Log_Troli going forward -- rejections never reach this sheet).
+//
+// De-duplicated per EventType (CycleId is already fixed by the wardCode +
+// operationalDay this function is scoped to): Log_Troli is also the Form's
+// own native response destination (setupSystem() -> form.setDestination
+// (SPREADSHEET,...)), so Google Forms auto-appends one row per real
+// submission (columns A-F only) BEFORE the installable onFormSubmit
+// trigger runs; onFormSubmit's own writeAcceptedEvent_() then appends a
+// SECOND, complete row (all 8 columns, including FormResponseId) for the
+// same physical event. Both rows are genuinely present in Log_Troli --
+// this collapses them back to one canonical timeline entry per event type,
+// preferring the row that carries a FormResponseId (the canonical
+// accept-pipeline write) over the Forms-native blank-provenance row; ties
+// break on the later timestamp, so a real correction still surfaces its
+// most recent value. Never keyed on timestamp/label alone.
 function buildTimelineForCycle_(ss, wardCode, operationalDay) {
   var sheet = ss.getSheetByName(SHEET_LOG_NAME);
   var lastRow = sheet.getLastRow();
@@ -260,7 +274,7 @@ function buildTimelineForCycle_(ss, wardCode, operationalDay) {
 
   var wardMap = loadWardMasterMap_(ss); // loaded once, reused per row below
   var data = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
-  var timeline = [];
+  var byEventType = {};
   for (var i = 0; i < data.length; i++) {
     var row = data[i];
     var ts = new Date(row[COL.TIMESTAMP]);
@@ -269,15 +283,27 @@ function buildTimelineForCycle_(ss, wardCode, operationalDay) {
     if (!entry || entry.wardCode !== wardCode) continue;
 
     var statusText = String(row[COL.STATUS_VALIDASI] || '');
-    timeline.push({
+    var candidate = {
       event: row[COL.EVENT],
       nama: row[COL.NAMA],
       jawatan: row[COL.JAWATAN],
       time: Utilities.formatDate(ts, TZ, 'HH:mm'),
       isCorrection: statusText.indexOf('CORRECTION') > -1,
-      isException: statusText.indexOf('EXCEPTION') > -1
-    });
+      isException: statusText.indexOf('EXCEPTION') > -1,
+      _tsMillis: ts.getTime(),
+      _hasFormResponseId: !!row[7]
+    };
+
+    var existing = byEventType[candidate.event];
+    var candidateWins = !existing ||
+      (candidate._hasFormResponseId && !existing._hasFormResponseId) ||
+      (candidate._hasFormResponseId === existing._hasFormResponseId && candidate._tsMillis > existing._tsMillis);
+    if (candidateWins) byEventType[candidate.event] = candidate;
   }
+
+  var timeline = Object.keys(byEventType).map(function (k) { return byEventType[k]; });
+  timeline.sort(function (a, b) { return a._tsMillis - b._tsMillis; });
+  timeline.forEach(function (ev) { delete ev._tsMillis; delete ev._hasFormResponseId; });
   return timeline;
 }
 

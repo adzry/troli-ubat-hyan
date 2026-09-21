@@ -242,5 +242,121 @@ test('S: resolveOperationalDay_ buckets pre/post-midnight KL timestamps into dif
   assert.strictEqual(S.deriveCycleId_('WL4A', day1) !== S.deriveCycleId_('WL4A', day2), true, 'must produce two distinct Cycle_IDs, never one spanning both');
 });
 
+// ---- T. Timeline dedup (buildTimelineForCycle_, Code.gs) ----
+// Reproduces the exact real-world defect found in FORE_2026-09-21: Log_Troli
+// is also the Form's native response destination (setupSystem() ->
+// form.setDestination(SPREADSHEET,...)), so Google Forms auto-appends one
+// row per real submission (columns A-F, blank status/FormResponseId) BEFORE
+// the installable onFormSubmit trigger's own writeAcceptedEvent_() appends
+// a second, complete row for the same physical event. A minimal fake
+// SpreadsheetApp-shaped ss stubs exactly the two sheets buildTimelineForCycle_
+// and loadWardMasterMap_ read (Log_Troli, Ward_Master), with Log_Troli
+// carrying literal duplicate row pairs per event, mirroring the live data.
+function makeFakeSheet_(rows) {
+  return {
+    getLastRow: function () { return rows.length + 1; }, // +1 for the header row this fake never stores
+    getRange: function (startRow, startCol, numRows) {
+      var slice = rows.slice(startRow - 2, startRow - 2 + numRows);
+      return { getValues: function () { return slice; } };
+    }
+  };
+}
+function makeFakeSs_(sheetsByName) {
+  return { getSheetByName: function (name) { return sheetsByName[name] || null; } };
+}
+
+test('T: buildTimelineForCycle_ collapses a Forms-native + canonical duplicate row pair to one entry per event type', function () {
+  var wardMasterRows = [['FOR', 'Forensik', 'Forensik', true, new Date()]];
+  var logRows = [
+    ['2026-09-20T19:42:18Z', 'a@x.com', 'Forensik', 'Hantar Troli', 'Scopper Gaban', 'PPK', '', ''],
+    ['2026-09-20T19:42:18Z', 'a@x.com', 'Forensik', 'Hantar Troli', 'Scopper Gaban', 'PPK', 'OK', 'FR1'],
+    ['2026-09-21T02:54:15Z', 'a@x.com', 'Forensik', 'Pengisian ubat selesai', 'Nerona Imu', 'PF', '', ''],
+    ['2026-09-21T02:54:15Z', 'a@x.com', 'Forensik', 'Pengisian ubat selesai', 'Nerona Imu', 'PF', 'OK', 'FR2']
+  ];
+  var ss = makeFakeSs_({
+    Log_Troli: makeFakeSheet_(logRows),
+    Ward_Master: makeFakeSheet_(wardMasterRows)
+  });
+
+  var timeline = S.buildTimelineForCycle_(ss, 'FOR', '2026-09-21');
+
+  assert.strictEqual(timeline.length, 2, 'exactly one entry per event type, not one per physical row');
+  assert.strictEqual(timeline[0].event, 'Hantar Troli');
+  assert.strictEqual(timeline[0].time, '03:42');
+  assert.strictEqual(timeline[0].nama, 'Scopper Gaban');
+  assert.strictEqual(timeline[1].event, 'Pengisian ubat selesai');
+  assert.strictEqual(timeline[1].time, '10:54');
+  assert.strictEqual(timeline[1].nama, 'Nerona Imu');
+});
+
+test('T: buildTimelineForCycle_ prefers the FormResponseId-bearing row over the blank Forms-native row', function () {
+  var wardMasterRows = [['FOR', 'Forensik', 'Forensik', true, new Date()]];
+  // Complete (canonical) row appended BEFORE the blank Forms-native row, to
+  // prove selection is not merely "first row wins" / row-order dependent.
+  var logRows = [
+    ['2026-09-20T19:42:18Z', 'a@x.com', 'Forensik', 'Hantar Troli', 'Scopper Gaban', 'PPK', 'OK', 'FR1'],
+    ['2026-09-20T19:42:18Z', 'a@x.com', 'Forensik', 'Hantar Troli', 'Scopper Gaban', 'PPK', '', '']
+  ];
+  var ss = makeFakeSs_({
+    Log_Troli: makeFakeSheet_(logRows),
+    Ward_Master: makeFakeSheet_(wardMasterRows)
+  });
+
+  var timeline = S.buildTimelineForCycle_(ss, 'FOR', '2026-09-21');
+
+  assert.strictEqual(timeline.length, 1);
+  assert.strictEqual(timeline[0].event, 'Hantar Troli');
+});
+
+test('T: buildTimelineForCycle_ renders Step 2 (before AMBIL) with exactly one Hantar and one Selesai, still deduplicated', function () {
+  var wardMasterRows = [['FOR', 'Forensik', 'Forensik', true, new Date()]];
+  var logRows = [
+    ['2026-09-20T19:42:18Z', 'a@x.com', 'Forensik', 'Hantar Troli', 'Scopper Gaban', 'PPK', '', ''],
+    ['2026-09-20T19:42:18Z', 'a@x.com', 'Forensik', 'Hantar Troli', 'Scopper Gaban', 'PPK', 'OK', 'FR1'],
+    ['2026-09-21T02:54:15Z', 'a@x.com', 'Forensik', 'Pengisian ubat selesai', 'Nerona Imu', 'PF', '', ''],
+    ['2026-09-21T02:54:15Z', 'a@x.com', 'Forensik', 'Pengisian ubat selesai', 'Nerona Imu', 'PF', 'OK', 'FR2']
+  ];
+  var ss = makeFakeSs_({
+    Log_Troli: makeFakeSheet_(logRows),
+    Ward_Master: makeFakeSheet_(wardMasterRows)
+  });
+
+  var timeline = S.buildTimelineForCycle_(ss, 'FOR', '2026-09-21');
+  var hantarCount = timeline.filter(function (e) { return e.event === 'Hantar Troli'; }).length;
+  var selesaiCount = timeline.filter(function (e) { return e.event === 'Pengisian ubat selesai'; }).length;
+  var ambilCount = timeline.filter(function (e) { return e.event === 'Troli ubat/pesanan ubat telah diambil'; }).length;
+
+  assert.strictEqual(hantarCount, 1);
+  assert.strictEqual(selesaiCount, 1);
+  assert.strictEqual(ambilCount, 0, 'no Ambil event exists yet -- the pending indicator is rendered client-side, never fabricated here');
+});
+
+test('T: buildTimelineForCycle_ renders Step 3 (after AMBIL) with exactly one entry per event type', function () {
+  var wardMasterRows = [['FOR', 'Forensik', 'Forensik', true, new Date()]];
+  var logRows = [
+    ['2026-09-20T19:42:18Z', 'a@x.com', 'Forensik', 'Hantar Troli', 'Scopper Gaban', 'PPK', '', ''],
+    ['2026-09-20T19:42:18Z', 'a@x.com', 'Forensik', 'Hantar Troli', 'Scopper Gaban', 'PPK', 'OK', 'FR1'],
+    ['2026-09-21T02:54:15Z', 'a@x.com', 'Forensik', 'Pengisian ubat selesai', 'Nerona Imu', 'PF', '', ''],
+    ['2026-09-21T02:54:15Z', 'a@x.com', 'Forensik', 'Pengisian ubat selesai', 'Nerona Imu', 'PF', 'OK', 'FR2'],
+    ['2026-09-21T03:05:26Z', 'a@x.com', 'Forensik', 'Troli ubat/pesanan ubat telah diambil', 'Rock D Xebec', 'SN', '', ''],
+    ['2026-09-21T03:05:26Z', 'a@x.com', 'Forensik', 'Troli ubat/pesanan ubat telah diambil', 'Rock D Xebec', 'SN', 'OK', 'FR3']
+  ];
+  var ss = makeFakeSs_({
+    Log_Troli: makeFakeSheet_(logRows),
+    Ward_Master: makeFakeSheet_(wardMasterRows)
+  });
+
+  var timeline = S.buildTimelineForCycle_(ss, 'FOR', '2026-09-21');
+
+  assert.strictEqual(timeline.length, 3);
+  // Per-index strictEqual, not deepStrictEqual: timeline is a native Array
+  // of the vm sandbox's own realm, which Node's deepStrictEqual can treat
+  // as a different "kind" than a host-realm array literal even when
+  // contents are identical -- not a defect in buildTimelineForCycle_.
+  assert.strictEqual(timeline[0].event, 'Hantar Troli', 'chronological order preserved after dedup');
+  assert.strictEqual(timeline[1].event, 'Pengisian ubat selesai', 'chronological order preserved after dedup');
+  assert.strictEqual(timeline[2].event, 'Troli ubat/pesanan ubat telah diambil', 'chronological order preserved after dedup');
+});
+
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed > 0 ? 1 : 0);
