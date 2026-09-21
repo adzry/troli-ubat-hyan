@@ -857,7 +857,23 @@ function reconcileCycles_() {
     var duplicateFormResponseIds = {};
 
     if (lastRow >= 2) {
-      var allRows = logSheet.getRange(2, 1, lastRow - 1, 8).getValues();
+      // Bounded scan (TIMELINE_SCAN_WINDOW_ROWS, defined in Code.gs -- both
+      // files share one global scope in the deployed Apps Script project,
+      // same as production), not a full-sheet read: reconcileCycles_ is
+      // already explicitly scoped to only today+yesterday (windowDays
+      // above), so it never needed the full history in the first place --
+      // it was just paying the read cost of the whole, ever-growing
+      // Log_Troli sheet (900+ rows and climbing) on every 15-minute firing
+      // regardless. That inflated how long this function holds
+      // LockService.getScriptLock() and performs writes, which is a
+      // plausible contributor to observed getWadStatus slowdowns when a
+      // reconciliation firing overlaps with concurrent ward polling. Safe
+      // for the same reason as buildTimelineForCycle_'s bound: rows are
+      // only ever appended, never inserted, so today/yesterday's rows are
+      // always among the most recently appended ones.
+      var scanRows = Math.min(TIMELINE_SCAN_WINDOW_ROWS, lastRow - 1);
+      var startRow = lastRow - scanRows + 1;
+      var allRows = logSheet.getRange(startRow, 1, scanRows, 8).getValues();
       var byCycle = {}; // cycleId -> {wardCode, ward, operationalDay, events:[{eventType,timestamp}]}
 
       allRows.forEach(function (row) {

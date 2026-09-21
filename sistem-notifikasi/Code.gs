@@ -285,6 +285,8 @@ function getWadStatus(wad) {
 // response rather than a clean failure -- see Index.html's handleStatus
 // null-guard. Same bounding pattern already used by
 // isDuplicateFormResponse_'s IDEMPOTENCY_SCAN_WINDOW_ROWS.
+// Also reused by reconcileCycles_ (Canonical.gs) for the same reason --
+// both files share one global scope in the deployed Apps Script project.
 var TIMELINE_SCAN_WINDOW_ROWS = 1000;
 
 function buildTimelineForCycle_(ss, wardCode, operationalDay, preloadedWardMap) {
